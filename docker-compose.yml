@@ -1,0 +1,14 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      DB_PATH: /data/aste.db
+      TEAMS_PATH: /config/teams.json
+      GLOBALS_PATH: /config/globals.json
+      FA_CSV_PATH: /config/fa_players.csv
+      SETTINGS_PATH: /config/settings.json
+    volumes:
+      - ./data:/data
+      - ./config:/config
