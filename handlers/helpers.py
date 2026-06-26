@@ -44,7 +44,8 @@ async def aggiorna_canale(context, asta_id: int):
             reply_markup=keyboard,
         )
     except Exception as e:
-        logger.warning("edit_message_text fallita asta_id=%d: %s", asta_id, e)
+        if "Message is not modified" not in str(e):
+            logger.warning("edit_message_text fallita asta_id=%d: %s", asta_id, e)
 
 
 async def notifica_watchers(context, asta_id: int, testo: str, escludi_gm: int = None):

@@ -131,7 +131,14 @@ async def listteams(update: Update, context: ContextTypes.DEFAULT_TYPE):
     all_teams = tm.get_all_teams()
     righe = ["<b>Squadre registrate:</b>\n"]
     for t in all_teams:
-        righe.append(f"• <b>{t['nome']}</b>\n  ID: <code>{t['id']}</code>  Cap: {t['cap_disponibile']}M  Slot: {t['slot_disponibili']}")
+        cap_virt = db.get_cap_virtuale(t['id'])
+        slot_virt = db.get_slot_virtuali(t['id'])
+        righe.append(
+            f"• <b>{t['nome']}</b>\n"
+            f"  ID: <code>{t['id']}</code>  "
+            f"Cap: {t['cap_disponibile']}M (libero: {t['cap_disponibile']-cap_virt}M)  "
+            f"Slot: {t['slot_disponibili']} (liberi: {t['slot_disponibili']-slot_virt})"
+        )
 
     await update.message.reply_text("\n".join(righe), parse_mode="HTML")
 

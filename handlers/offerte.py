@@ -74,18 +74,19 @@ def _check_cap(team_id: str, importo: int) -> tuple[bool, int]:
 async def nuova_fa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     team = tm.get_team_by_gm(user.id)
+    msg = update.effective_message
     if team is None:
-        await update.message.reply_text("⛔ Non sei registrato come GM.")
+        await msg.reply_text("⛔ Non sei registrato come GM.")
         return ConversationHandler.END
 
     if not context.args:
-        await update.message.reply_text(
+        await msg.reply_text(
             "Uso: /nuova_fa <nome giocatore>\nEsempio: /nuova_fa Stephen Curry"
         )
         return ConversationHandler.END
 
     if not utils.is_mercato_aperto():
-        await update.message.reply_text("🔒 Il mercato FA è attualmente chiuso.")
+        await msg.reply_text("🔒 Il mercato FA è attualmente chiuso.")
         return ConversationHandler.END
 
     giocatore_input = " ".join(context.args)
@@ -93,11 +94,11 @@ async def nuova_fa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     if nome_esatto:
         if db.giocatore_gia_in_asta(nome_esatto):
-            await update.message.reply_text(f"❌ Esiste già un'asta aperta per <b>{nome_esatto}</b>.", parse_mode="HTML")
+            await msg.reply_text(f"❌ Esiste già un'asta aperta per <b>{nome_esatto}</b>.", parse_mode="HTML")
             return ConversationHandler.END
         context.user_data["nuova_fa_giocatore"] = nome_esatto
         context.user_data["nuova_fa_team"] = team
-        await update.message.reply_text(
+        await msg.reply_text(
             f"🏀 Nuova asta FA per <b>{nome_esatto}</b>.\n\nQuanto offri? (minimo {settings.rilancio_minimo()}M)\n"
             f"<i>Per annullare: /annulla</i>",
             parse_mode="HTML",
@@ -110,7 +111,7 @@ async def nuova_fa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                    for i, n in enumerate(omonimi)]
         bottoni.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla")])
         context.user_data["nuova_fa_omonimi"] = omonimi
-        await update.message.reply_text(
+        await msg.reply_text(
             "Trovati più giocatori con questo cognome. Scegli:",
             reply_markup=InlineKeyboardMarkup(bottoni),
         )
@@ -123,12 +124,12 @@ async def nuova_fa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             InlineKeyboardButton(f"✅ Sì, {suggerimento}", callback_data="fa_conferma:si"),
             InlineKeyboardButton("❌ No", callback_data="fa_conferma:no"),
         ]])
-        await update.message.reply_text(
+        await msg.reply_text(
             f"Intendevi <b>{suggerimento}</b>?", parse_mode="HTML", reply_markup=kb
         )
         return NUOVA_FA_CONFERMA
 
-    await update.message.reply_text(
+    await msg.reply_text(
         f"❌ <b>{giocatore_input}</b> non trovato nella lista FA.", parse_mode="HTML"
     )
     return ConversationHandler.END

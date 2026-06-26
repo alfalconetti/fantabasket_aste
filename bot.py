@@ -28,8 +28,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     if not dev_id:
         return
     tb = "".join(traceback.format_exception(type(context.error), context.error, context.error.__traceback__))
+    user_info = ""
+    if update and hasattr(update, "effective_user") and update.effective_user:
+        u = update.effective_user
+        user_info = f"👤 {u.first_name} (@{u.username or '?'}) · ID: {u.id}\n"
     testo = (
-        f"❌ <b>Errore non gestito</b>\n\n"
+        f"❌ <b>Errore non gestito</b>\n"
+        f"{user_info}\n"
         f"<code>{str(context.error)}</code>\n\n"
         f"<pre>{tb[-2000:]}</pre>"
     )

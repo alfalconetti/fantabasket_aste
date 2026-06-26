@@ -86,6 +86,13 @@ def trova_giocatore_fa(input_nome: str) -> tuple[str | None, str | None, list[st
     if len(per_cognome) > 1:
         return None, None, per_cognome
 
+    # fuzzy sul cognome
+    cognomi_map = {normalizza(p).split()[-1]: p for p in players}
+    matches_cog = difflib.get_close_matches(cognome_input, cognomi_map.keys(), n=1, cutoff=0.75)
+    if matches_cog:
+        return None, cognomi_map[matches_cog[0]], []
+
+    # fuzzy sul nome completo
     matches = difflib.get_close_matches(norm_input, norm_map.keys(), n=1, cutoff=0.7)
     if matches:
         return None, norm_map[matches[0]], []
