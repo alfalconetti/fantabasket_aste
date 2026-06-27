@@ -2,6 +2,8 @@
 
 Bot Telegram per gestire aste di free agency (FA e RFA) per una lega Fantabasket.
 
+Sviluppato con [Claude](https://claude.ai) (Anthropic).
+
 ## Stack
 
 - Python 3.12 + python-telegram-bot 21.6
@@ -11,18 +13,22 @@ Bot Telegram per gestire aste di free agency (FA e RFA) per una lega Fantabasket
 ## Struttura
 
 ```
-├── bot.py                  # Entry point
+├── bot.py                  # Entry point, error handler, recupero stati al restart
 ├── database.py             # Query SQLite
 ├── teams.py                # Lettura/scrittura JSON squadre
-├── utils.py                # Config, CSV giocatori, formatting messaggi canale
+├── utils.py                # Config, CSV giocatori, normalizzazione, formatting canale
 ├── settings.py             # Lettura settings.json (costanti di business)
 ├── scheduler.py            # Job periodico: scadenze e notifiche
 ├── handlers/
-│   ├── helpers.py          # Funzioni condivise tra handlers
+│   ├── helpers.py          # Funzioni condivise (aggiorna_canale, notifica_watchers, log_warn)
 │   ├── offerte.py          # Flusso offerte FA/RFA
 │   ├── firma.py            # Flusso firma, pareggio RFA
-│   ├── user.py             # Comandi utente: /me /watched /lista_fa
+│   ├── user.py             # Comandi utente: /me /watched /lista_fa /autocap /autoslot /silenzia
 │   └── admin.py            # Comandi admin
+├── docs/
+│   ├── guida_gm.md         # Guida per i GM
+│   └── guida_admin.md      # Guida per gli admin
+├── CHANGELOG.md            # Storia delle versioni
 └── config/                 # NON in git — dati sensibili
     ├── globals.json
     ├── teams.json
@@ -44,7 +50,9 @@ Crea la cartella `config/` con i seguenti file:
   "mercato_aperto": true,
   "fase": "offseason",
   "admin_group_id": null,
-  "dev_id": 123456789
+  "dev_id": 123456789,
+  "log_channel_id": null,
+  "stagione_corrente": "2026"
 }
 ```
 
@@ -105,6 +113,12 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
+## Documentazione
+
+- [Guida GM](docs/guida_gm.md)
+- [Guida Admin](docs/guida_admin.md)
+- [Changelog](CHANGELOG.md)
+
 ## Comandi utente
 
 | Comando | Descrizione |
@@ -117,6 +131,9 @@ docker compose logs -f
 | `/listteams` | Squadre e cap |
 | `/watched` | Aste che stai seguendo |
 | `/me` | Tua situazione cap e slot |
+| `/autocap <importo>` | Aggiunge cap in emergenza (notifica admin) |
+| `/autoslot <importo>` | Aggiunge slot in emergenza (notifica admin) |
+| `/silenzia <asta_id>` | Smetti di seguire un'asta |
 | `/annulla` | Esci da qualsiasi operazione |
 
 ## Comandi admin
@@ -126,12 +143,16 @@ docker compose logs -f
 | `/nuova_rfa <giocatore> <team_id> <vecchio_compenso>` | Apre asta RFA |
 | `/chiudi_asta <id>` | Chiude forzatamente un'asta |
 | `/annulla_asta <id>` | Annulla un'asta |
-| `/reset_rfa` | Resetta flag RFA per nuova stagione |
+| `/annulla_offerta <id>` | Annulla ultima offerta |
+| `/reset_rfa <nuova_stagione>` | Cambia stagione corrente |
 | `/set_cap <team_id> <valore>` | Imposta cap squadra |
+| `/add_cap <team_id> <importo>` | Aggiunge/sottrae cap |
 | `/set_slot <team_id> <valore>` | Imposta slot squadra |
+| `/add_slot <team_id> <importo>` | Aggiunge/sottrae slot |
 | `/set_cap_penalizzato <team_id> <valore>` | Imposta penalità cap |
 | `/set_fase <offseason\|regular>` | Cambia fase e scala cap |
 | `/apri_mercato` / `/chiudi_mercato` | Gestisce mercato FA |
-| `/listteams` | Lista squadre con ID |
+| `/listteams` | Lista squadre con ID e cap virtuale |
 | `/aste` | Lista aste con ID |
 | `/admin` | Lista comandi admin |
+| `/reboot` | Riavvia il bot (solo dev) |

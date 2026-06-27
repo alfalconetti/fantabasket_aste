@@ -94,7 +94,7 @@ def trova_giocatore_fa(input_nome: str) -> tuple[str | None, str | None, list[st
     if len(per_cognome) > 1:
         return None, None, per_cognome
 
-    # fuzzy sul cognome — se trova un cognome simile, cerca tutti i giocatori con quel cognome
+    # fuzzy sul cognome — prima suggerisce il cognome, poi eventualmente mostra omonimi
     cognomi_unici = list({normalizza(p).split()[-1] for p in players})
     matches_cog = difflib.get_close_matches(cognome_input, cognomi_unici, n=1, cutoff=0.75)
     if matches_cog:
@@ -104,7 +104,9 @@ def trova_giocatore_fa(input_nome: str) -> tuple[str | None, str | None, list[st
         if len(per_cognome_fuzzy) == 1:
             return None, per_cognome_fuzzy[0], []
         if len(per_cognome_fuzzy) > 1:
-            return None, None, per_cognome_fuzzy
+            # Omonimi: suggerisce il cognome originale come conferma, con lista per dopo
+            cognome_originale = per_cognome_fuzzy[0].split()[-1]
+            return None, f"__cognome__{cognome_originale}", per_cognome_fuzzy
 
     # fuzzy sul nome completo
     matches = difflib.get_close_matches(norm_input, norm_map.keys(), n=1, cutoff=0.7)

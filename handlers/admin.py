@@ -180,6 +180,7 @@ async def set_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _notifica_gm_cap_slot(context, team,
         f"ℹ️ Il tuo cap è stato modificato.\nCap: {vecchio}M → <b>{valore}M</b>",
         admin_name=update.effective_user.first_name)
+    await _check_cap_virtuale_negativo(context, team_id, team["nome"])
     logger.info("set_cap: team=%s valore=%d admin=%d", team_id, valore, update.effective_user.id)
 
 
@@ -425,6 +426,29 @@ async def admin_annulla_callback(update: Update, context: ContextTypes.DEFAULT_T
                 except Exception as e:
                     logger.warning("notifica annullamento prop RFA %d: %s", gm_id, e)
 
+    # notifica watcher
+    from handlers.helpers import notifica_watchers as _nw
+    gm_ids_gia_notificati = set()
+    if asta["offerente_team_id"]:
+        team_v = tm_ann.get_team_by_id(asta["offerente_team_id"])
+        if team_v:
+            gm_ids_gia_notificati.update(team_v["gm_ids"])
+    if asta["tipo"] == "RFA" and asta["squadra_proprietaria"]:
+        team_p = tm_ann.get_team_by_id(asta["squadra_proprietaria"])
+        if team_p:
+            gm_ids_gia_notificati.update(team_p["gm_ids"])
+    watchers = db.get_watchers(asta_id)
+    for gm_id in watchers:
+        if gm_id not in gm_ids_gia_notificati:
+            try:
+                await context.bot.send_message(
+                    chat_id=gm_id,
+                    text=f"❌ L'asta per <b>{asta['giocatore']}</b> è stata annullata da un admin.",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                await _log_warn(context, f"Notifica annullamento watcher {gm_id}: {e}")
+
     # annuncio nel canale
     channel_id = utils.get_channel_id()
     try:
@@ -602,6 +626,34 @@ async def set_cap_penalizzato(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info("set_cap_penalizzato: team=%s valore=%d", team_id, valore)
 
 
+async def _check_cap_virtuale_negativo(context, team_id: str, team_nome: str):
+    """Manda warning al gruppo admin se il cap virtuale è negativo dopo una modifica."""
+    cap_virt = db.get_cap_virtuale(team_id)
+    team_data = tm.get_team_by_id(team_id)
+    if team_data and (team_data["cap_disponibile"] - cap_virt) < 0:
+        await _log_warn(
+            context,
+            f"⚠️ <b>{team_nome}</b> ha cap virtuale negativo dopo modifica admin!\n"
+            f"Cap disponibile: {team_data['cap_disponibile']}M · Cap impegnato: {cap_virt}M"
+        )
+        admin_group_id = utils.get_admin_group_id()
+        if admin_group_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_group_id,
+                    text=(
+                        f"🚨 <b>CAP VIRTUALE NEGATIVO</b>\n"
+                        f"<b>{team_nome}</b>\n"
+                        f"Cap disponibile: {team_data['cap_disponibile']}M\n"
+                        f"Cap virtualmente impegnato: {cap_virt}M\n"
+                        f"Differenza: {team_data['cap_disponibile'] - cap_virt}M"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.warning("notifica cap negativo gruppo admin: %s", e)
+
+
 async def _notifica_gm_cap_slot(context, team: dict, testo: str, admin_name: str = "Admin"):
     """Notifica tutti i GM di una squadra quando admin modifica cap o slot."""
     from datetime import datetime, timezone
@@ -652,6 +704,7 @@ async def add_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _notifica_gm_cap_slot(context, team,
         f"ℹ️ Il tuo cap è stato modificato.\nCap: {team['cap_disponibile']}M {segno}{delta}M → <b>{nuovo_cap}M</b>",
         admin_name=update.effective_user.first_name)
+    await _check_cap_virtuale_negativo(context, team_id, team["nome"])
     logger.info("add_cap: team=%s delta=%d nuovo=%d admin=%d", team_id, delta, nuovo_cap, update.effective_user.id)
 
 
@@ -748,6 +801,41 @@ async def annulla_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{cap_virt}M impegnato). Potrebbe essere necessario un intervento manuale."
             )
 
+    # notifica GM a cui è stata annullata l'offerta
+    team_el_obj = tm.get_team_by_id(result["team_eliminato"]) if result["team_eliminato"] else None
+    if team_el_obj:
+        for gm_id in team_el_obj["gm_ids"]:
+            try:
+                await context.bot.send_message(
+                    chat_id=gm_id,
+                    text=(
+                        f"⚠️ La tua offerta di <b>{result['offerta_eliminata']}M</b> "
+                        f"per <b>{asta['giocatore']}</b> è stata annullata da un admin.\n"
+                        f"Offerta attuale: <b>{result['nuovo_importo']}M — {nuovo_team}</b>"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                await _log_warn(context, f"Notifica annulla_offerta GM {gm_id}: {e}")
+
+    # notifica watcher (escluso il GM già notificato)
+    gm_ids_notificati = set(team_el_obj["gm_ids"]) if team_el_obj else set()
+    watchers = db.get_watchers(asta_id)
+    for gm_id in watchers:
+        if gm_id not in gm_ids_notificati:
+            try:
+                await context.bot.send_message(
+                    chat_id=gm_id,
+                    text=(
+                        f"⚠️ Offerta annullata da admin su <b>{asta['giocatore']}</b>\n"
+                        f"Offerta eliminata: {result['offerta_eliminata']}M — {team_el}\n"
+                        f"Offerta attuale: <b>{result['nuovo_importo']}M — {nuovo_team}</b>"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                await _log_warn(context, f"Notifica annulla_offerta watcher {gm_id}: {e}")
+
     await update.message.reply_text(
         f"✅ Ultima offerta di <b>{team_el}</b> ({result['offerta_eliminata']}M) annullata.\n"
         f"Offerta attuale: <b>{result['nuovo_importo']}M — {nuovo_team}</b>{warning_cap}",
@@ -805,7 +893,7 @@ async def autocap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     notifica = (
-        f"⚠️ <b>AUTOCAP</b>\n"
+        f"⚠️ <b>Autocap</b>\n"
         f"👤 {user.first_name} (@{user.username or '?'}) — <b>{team['nome']}</b>\n"
         f"💰 +{importo}M (da {vecchio_cap}M a {nuovo_cap}M)\n"
         f"🕐 {ora}\n\n"
@@ -871,7 +959,7 @@ async def auto_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     notifica = (
-        f"⚠️ <b>AUTO_SLOT</b>\n"
+        f"⚠️ <b>Autoslot</b>\n"
         f"👤 {user.first_name} (@{user.username or '?'}) — <b>{team['nome']}</b>\n"
         f"🪑 +{importo} slot (da {vecchio} a {nuovo})\n"
         f"🕐 {ora}\n\n"

@@ -105,6 +105,20 @@ async def nuova_fa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return NUOVA_FA_IMPORTO
 
+    if omonimi and suggerimento and suggerimento.startswith("__cognome__"):
+        # Fuzzy cognome con omonimi: prima chiede conferma del cognome, poi mostra lista
+        cognome_originale = suggerimento.replace("__cognome__", "")
+        context.user_data["nuova_fa_team"] = team
+        context.user_data["nuova_fa_omonimi"] = omonimi
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"✅ Sì, {cognome_originale}", callback_data="fa_conferma:cognome"),
+            InlineKeyboardButton("❌ No", callback_data="fa_conferma:no"),
+        ]])
+        await msg.reply_text(
+            f"Intendevi il cognome <b>{cognome_originale}</b>?", parse_mode="HTML", reply_markup=kb
+        )
+        return NUOVA_FA_CONFERMA
+
     if omonimi:
         context.user_data["nuova_fa_team"] = team
         bottoni = [[InlineKeyboardButton(n, callback_data=f"fa_omonimo:{i}")]
@@ -164,6 +178,21 @@ async def nuova_fa_conferma_callback(update: Update, context: ContextTypes.DEFAU
     if scelta == "no":
         await query.edit_message_text("Operazione annullata.")
         return ConversationHandler.END
+
+    if scelta == "cognome":
+        # Cognome confermato: mostra lista omonimi
+        omonimi = context.user_data.get("nuova_fa_omonimi", [])
+        if not omonimi:
+            await query.edit_message_text("❌ Sessione scaduta. Riprova con /nuova_fa.")
+            return ConversationHandler.END
+        bottoni = [[InlineKeyboardButton(n, callback_data=f"fa_omonimo:{i}")]
+                   for i, n in enumerate(omonimi)]
+        bottoni.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla")])
+        await query.edit_message_text(
+            "Trovati più giocatori con questo cognome. Scegli:",
+            reply_markup=InlineKeyboardMarkup(bottoni),
+        )
+        return NUOVA_FA_OMONIMIA
 
     suggerimento = context.user_data.get("nuova_fa_suggerimento")
     team = context.user_data.get("nuova_fa_team")
@@ -364,7 +393,8 @@ async def _esegui_offerta(context, team, asta_id: int, importo: int, gm_id: int)
     await notifica_watchers(
         context, asta_id,
         f"🔔 <b>{asta['giocatore']}</b>\nNuova offerta: <b>{importo}M — {team_nome}</b>\n"
-        f"⏰ Scade: {utils.format_dt(nuova_scadenza)}",
+        f"⏰ Scade: {utils.format_dt(nuova_scadenza)}\n"
+        f"<i>Per silenziare: /silenzia {asta_id}</i>",
         escludi_gm=gm_id,
     )
 
@@ -445,6 +475,9 @@ async def start_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 f"/listteams — squadre e cap\n"
                 f"/watched — aste che stai seguendo\n"
                 f"/me — tua situazione cap e slot\n"
+                f"/autocap &lt;importo&gt; — aggiunge cap in emergenza\n"
+                f"/autoslot &lt;importo&gt; — aggiunge slot in emergenza\n"
+                f"/silenzia &lt;asta_id&gt; — smetti di seguire un'asta\n"
                 f"/annulla — esci da qualsiasi operazione in corso\n\n"
                 f"<b>Come funziona:</b>\n"
                 f"Ogni offerta resetta il timer a 18 ore. Non puoi rilanciare su te stesso. "
@@ -525,7 +558,7 @@ def get_handlers():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, nuova_fa_importo),
             ],
             NUOVA_FA_CONFERMA: [
-                CallbackQueryHandler(nuova_fa_conferma_callback, pattern=r"^fa_conferma:(si|no)$"),
+                CallbackQueryHandler(nuova_fa_conferma_callback, pattern=r"^fa_conferma:(si|no|cognome)$"),
             ],
             NUOVA_FA_OMONIMIA: [
                 CallbackQueryHandler(nuova_fa_omonimo_callback,  pattern=r"^fa_omonimo:\d+$"),

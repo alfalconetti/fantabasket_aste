@@ -230,11 +230,35 @@ async def lista_fa_avvia_callback(update: Update, context: ContextTypes.DEFAULT_
     await query.message.reply_text(f"/nuova_fa {nome}")
 
 
+async def cmd_silenzia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    team = tm.get_team_by_gm(user.id)
+    if team is None:
+        await update.message.reply_text("⛔ Non sei registrato come GM.")
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /silenzia <asta_id>")
+        return
+    try:
+        asta_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID non valido.")
+        return
+    if not db.is_watching(asta_id, user.id):
+        await update.message.reply_text("Non stai seguendo questa asta.")
+        return
+    db.remove_watch(asta_id, user.id)
+    asta = db.get_asta(asta_id)
+    nome = asta["giocatore"] if asta else f"asta {asta_id}"
+    await update.message.reply_text(f"🔕 Non riceverai più notifiche per <b>{nome}</b>.", parse_mode="HTML")
+
+
 def get_handlers():
     return [
         CommandHandler("me",       cmd_me),
         CommandHandler("autocap",   _autocap_from_user),
         CommandHandler("autoslot",   _auto_slot_from_user),
+        CommandHandler("silenzia",    cmd_silenzia),
         CommandHandler("watched",  cmd_watched),
         CommandHandler("lista_fa", cmd_lista_fa),
         CallbackQueryHandler(watch_callback,         pattern=r"^watch:\d+$"),
