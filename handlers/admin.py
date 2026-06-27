@@ -73,8 +73,9 @@ async def nuova_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato. Usa /listteams.", parse_mode="HTML")
         return
 
-    # max 1 RFA per team
-    if db.team_ha_rfa_stagione(team_id):
+    # max 1 RFA per team per stagione
+    stagione = utils.get_stagione_corrente()
+    if db.team_ha_rfa_stagione(team_id, stagione):
         await update.message.reply_text(f"❌ {team['nome']} ha già utilizzato la RFA questa stagione.")
         return
 
@@ -97,6 +98,7 @@ async def nuova_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         vecchio_compenso=vecchio_compenso,
         creata_at=now.isoformat(),
         scade_at=scade.isoformat(),
+        stagione=stagione,
     )
 
     channel_id = utils.get_channel_id()
@@ -176,8 +178,8 @@ async def set_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Cap di <b>{team['nome']}</b> impostato a <b>{valore}M</b>.", parse_mode="HTML"
     )
     await _notifica_gm_cap_slot(context, team,
-        f"ℹ️ Il tuo cap è stato modificato da un admin.\n"
-        f"Cap: {vecchio}M → <b>{valore}M</b>")
+        f"ℹ️ Il tuo cap è stato modificato.\nCap: {vecchio}M → <b>{valore}M</b>",
+        admin_name=update.effective_user.first_name)
     logger.info("set_cap: team=%s valore=%d admin=%d", team_id, valore, update.effective_user.id)
 
 
@@ -212,8 +214,8 @@ async def set_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Slot di <b>{team['nome']}</b> impostati a <b>{valore}</b>.", parse_mode="HTML"
     )
     await _notifica_gm_cap_slot(context, team,
-        f"ℹ️ I tuoi slot sono stati modificati da un admin.\n"
-        f"Slot: {vecchio} → <b>{valore}</b>")
+        f"ℹ️ I tuoi slot sono stati modificati.\nSlot: {vecchio} → <b>{valore}</b>",
+        admin_name=update.effective_user.first_name)
     logger.info("set_slot: team=%s valore=%d admin=%d", team_id, valore, update.effective_user.id)
 
 
@@ -494,27 +496,32 @@ async def set_fase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── /reset_rfa ───────────────────────────────────────────────────────────────
 
 async def reset_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mostra anteprima e chiede conferma prima di resettare."""
+    """Chiede la nuova stagione e conferma prima di resettare."""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Non sei autorizzato.")
         return
 
-    with db.get_conn() as conn:
-        rows = conn.execute(
-            "SELECT giocatore, stato FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA')"
-        ).fetchall()
-
-    if not rows:
-        await update.message.reply_text("Nessuna asta RFA conclusa da resettare.")
+    if not context.args:
+        stagione_corrente = utils.get_stagione_corrente()
+        await update.message.reply_text(
+            f"Uso: /reset_rfa <nuova_stagione>\n"
+            f"Esempio: /reset_rfa 2025-26\n\n"
+            f"Stagione corrente: <b>{stagione_corrente}</b>",
+            parse_mode="HTML",
+        )
         return
 
-    elenco = "\n".join(f"  • {r['giocatore']} ({r['stato']})" for r in rows)
+    nuova_stagione = context.args[0]
+    stagione_corrente = utils.get_stagione_corrente()
+    context.user_data["nuova_stagione"] = nuova_stagione
+
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Conferma reset", callback_data="reset_rfa:conferma"),
-        InlineKeyboardButton("❌ Annulla",        callback_data="admin_noop"),
+        InlineKeyboardButton("✅ Conferma", callback_data="reset_rfa:conferma"),
+        InlineKeyboardButton("❌ Annulla",  callback_data="admin_noop"),
     ]])
     await update.message.reply_text(
-        f"Stai per eliminare <b>{len(rows)} aste RFA</b> della stagione precedente:\n{elenco}\n\nConfermi?",
+        f"Cambio stagione: <b>{stagione_corrente} → {nuova_stagione}</b>\n"
+        f"Tutti i team potranno aprire una nuova RFA.\n\nConfermi?",
         parse_mode="HTML",
         reply_markup=kb,
     )
@@ -527,31 +534,27 @@ async def reset_rfa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("⛔ Non sei autorizzato.")
         return
 
-    with db.get_conn() as conn:
-        result = conn.execute(
-            "SELECT COUNT(*) as n FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA')"
-        ).fetchone()
-        n = result["n"]
-        # elimina prima i record collegati per rispettare i vincoli FK
-        conn.execute(
-            """DELETE FROM offerte WHERE asta_id IN (
-               SELECT id FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA'))"""
-        )
-        conn.execute(
-            """DELETE FROM aste_watch WHERE asta_id IN (
-               SELECT id FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA'))"""
-        )
-        conn.execute(
-            """DELETE FROM contratti WHERE asta_id IN (
-               SELECT id FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA'))"""
-        )
-        conn.execute("DELETE FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA')")
+    # leggi nuova stagione dagli args salvati in user_data
+    nuova_stagione = context.user_data.pop("nuova_stagione", None)
+    if not nuova_stagione:
+        await query.edit_message_text("❌ Stagione non specificata.")
+        return
+
+    # aggiorna stagione_corrente in globals
+    with open(GLOBALS_PATH, "r", encoding="utf-8") as f:
+        import json as _json
+        globals_data = _json.load(f)
+    vecchia_stagione = globals_data.get("stagione_corrente", "?")
+    globals_data["stagione_corrente"] = nuova_stagione
+    with open(GLOBALS_PATH, "w", encoding="utf-8") as f:
+        _json.dump(globals_data, f, ensure_ascii=False, indent=2)
 
     await query.edit_message_text(
-        f"✅ Reset RFA completato. Eliminate {n} aste RFA della stagione precedente.\nTutti i team possono ora aprire una nuova RFA.",
+        f"✅ Stagione aggiornata: <b>{vecchia_stagione} → {nuova_stagione}</b>\n"
+        f"Tutti i team possono ora aprire una nuova RFA.",
         parse_mode="HTML",
     )
-    logger.info("reset_rfa confermato: eliminate %d aste admin=%d", n, query.from_user.id)
+    logger.info("reset_rfa: stagione %s → %s admin=%d", vecchia_stagione, nuova_stagione, query.from_user.id)
 
 
 # ── /set_cap_penalizzato ─────────────────────────────────────────────────────
@@ -599,11 +602,14 @@ async def set_cap_penalizzato(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info("set_cap_penalizzato: team=%s valore=%d", team_id, valore)
 
 
-async def _notifica_gm_cap_slot(context, team: dict, testo: str):
+async def _notifica_gm_cap_slot(context, team: dict, testo: str, admin_name: str = "Admin"):
     """Notifica tutti i GM di una squadra quando admin modifica cap o slot."""
+    from datetime import datetime, timezone
+    ora = utils.format_dt(datetime.now(timezone.utc).isoformat())
+    testo_completo = f"{testo}\n<i>Modifica effettuata da {admin_name} · {ora}</i>"
     for gm_id in team["gm_ids"]:
         try:
-            await context.bot.send_message(chat_id=gm_id, text=testo, parse_mode="HTML")
+            await context.bot.send_message(chat_id=gm_id, text=testo_completo, parse_mode="HTML")
         except Exception as e:
             await _log_warn(context, f"Notifica cap/slot GM {gm_id} ({team['nome']}) fallita: {e}")
 
@@ -644,8 +650,8 @@ async def add_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
     )
     await _notifica_gm_cap_slot(context, team,
-        f"ℹ️ Il tuo cap è stato modificato da un admin.\n"
-        f"Cap: {team['cap_disponibile']}M {segno}{delta}M → <b>{nuovo_cap}M</b>")
+        f"ℹ️ Il tuo cap è stato modificato.\nCap: {team['cap_disponibile']}M {segno}{delta}M → <b>{nuovo_cap}M</b>",
+        admin_name=update.effective_user.first_name)
     logger.info("add_cap: team=%s delta=%d nuovo=%d admin=%d", team_id, delta, nuovo_cap, update.effective_user.id)
 
 
@@ -678,7 +684,8 @@ async def add_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Slot di <b>{team['nome']}</b>: {team['slot_disponibili']} {segno}{delta} → <b>{nuovo}</b>", parse_mode="HTML"
     )
     await _notifica_gm_cap_slot(context, team,
-        f"ℹ️ I tuoi slot sono stati modificati da un admin.\nSlot: {team['slot_disponibili']} {segno}{delta} → <b>{nuovo}</b>")
+        f"ℹ️ I tuoi slot sono stati modificati.\nSlot: {team['slot_disponibili']} {segno}{delta} → <b>{nuovo}</b>",
+        admin_name=update.effective_user.first_name)
     logger.info("add_slot: team=%s delta=%d nuovo=%d admin=%d", team_id, delta, nuovo, update.effective_user.id)
 
 
@@ -727,9 +734,23 @@ async def annulla_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await _log_warn(context, f"Annuncio annulla_offerta canale fallito: {e}")
 
+    # check cap virtuale del team ripristinato
+    warning_cap = ""
+    if result["nuovo_team"]:
+        import database as _db2
+        import teams as _tm2
+        cap_virt = _db2.get_cap_virtuale(result["nuovo_team"])
+        team_data = _tm2.get_team_by_id(result["nuovo_team"])
+        if team_data and (team_data["cap_disponibile"] - cap_virt) < 0:
+            warning_cap = (
+                f"\n\n⚠️ <b>Attenzione:</b> {teams_map.get(result['nuovo_team'], result['nuovo_team'])} "
+                f"ha cap virtuale negativo ({team_data['cap_disponibile']}M disponibile, "
+                f"{cap_virt}M impegnato). Potrebbe essere necessario un intervento manuale."
+            )
+
     await update.message.reply_text(
         f"✅ Ultima offerta di <b>{team_el}</b> ({result['offerta_eliminata']}M) annullata.\n"
-        f"Offerta attuale: <b>{result['nuovo_importo']}M — {nuovo_team}</b>",
+        f"Offerta attuale: <b>{result['nuovo_importo']}M — {nuovo_team}</b>{warning_cap}",
         parse_mode="HTML",
     )
     logger.info("annulla_offerta: asta_id=%d offerta=%d admin=%d", asta_id, result["offerta_eliminata"], update.effective_user.id)
@@ -751,7 +772,7 @@ async def autocap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args or len(context.args) != 1:
         await update.message.reply_text(
-            "Uso: /autocap <importo>\nEsempio: /autocap 15\n\n"
+            "Uso: /autocap &lt;importo&gt;\nEsempio: /autocap 15\n\n"
             "<i>⚠️ Usare solo in caso di necessità (es. trade appena avvenuta). "
             "La richiesta viene segnalata agli admin per verifica. "
             "In caso di dichiarazione falsa saranno applicate penalità.</i>",
@@ -821,7 +842,7 @@ async def auto_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if not context.args or len(context.args) != 1:
         await update.message.reply_text(
-            "Uso: /auto_slot <importo>\nEsempio: /auto_slot 1\n\n"
+            "Uso: /autoslot &lt;importo&gt;\nEsempio: /autoslot 1\n\n"
             "<i>⚠️ Usare solo in caso di necessità. La richiesta viene segnalata agli admin per verifica.</i>",
             parse_mode="HTML",
         )

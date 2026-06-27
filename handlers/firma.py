@@ -107,7 +107,8 @@ async def chiedi_anni(context: ContextTypes.DEFAULT_TYPE, asta_id: int):
             ))
     kb = InlineKeyboardMarkup([bottoni])
 
-    nota_anni = "<i>(20–34M → min 2 anni · 35M+ → 3 anni obbligatori)</i>"
+    s = settings.get()
+    nota_anni = f"<i>({s['soglia_anni_2']}–{s['fascia_media_max']}M → min 2 anni · {s['soglia_anni_3']}M+ → 3 anni obbligatori)</i>"
     testo = (
         f"🏆 <b>Hai vinto l'asta per {asta['giocatore']}!</b>\n\n"
         f"💰 Offerta: <b>{importo}M</b>\n\n"

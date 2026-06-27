@@ -1,10 +1,11 @@
 import logging
 import os
+import signal
 import traceback
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 
 import database as db
 import utils
@@ -24,12 +25,20 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ["BOT_TOKEN"]
 
 
+def _ora() -> str:
+    return utils.format_dt(datetime.now(timezone.utc).isoformat())
+
+
 async def _send_log(bot, testo: str):
     """Invia messaggio al canale log se configurato."""
     log_channel_id = utils.get_log_channel_id()
     if log_channel_id:
         try:
-            await bot.send_message(chat_id=log_channel_id, text=testo, parse_mode="HTML")
+            await bot.send_message(
+                chat_id=log_channel_id,
+                text=f"🕐 {_ora()}\n{testo}",
+                parse_mode="HTML"
+            )
         except Exception as e:
             logger.warning("Impossibile inviare al canale log: %s", e)
 
@@ -56,7 +65,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         f"<code>{str(context.error)}</code>\n\n"
         f"<pre>{tb[-2000:]}</pre>"
     )
-    # errori gravi: canale log + dev in privato
     await _send_log(context.bot, testo)
     dev_id = utils.load_globals().get("dev_id")
     if dev_id:
@@ -71,22 +79,18 @@ async def recupera_stati_pendenti(context: ContextTypes.DEFAULT_TYPE):
     Eseguito all'avvio: recupera aste in stato CHIUSA o PAREGGIO
     e ripristina i flussi interrotti da un eventuale restart.
     """
-    from handlers.firma import chiedi_anni, _chiedi_pareggio
+    from handlers.firma import chiedi_anni, _chiedi_pareggio, _chiedi_firma_proprietario_senza_offerte
     from handlers.helpers import aggiorna_canale
 
-    # Aste CHIUSE: il vincitore non ha ancora scelto gli anni
     chiuse = db.get_aste_chiuse()
     for asta in chiuse:
         logger.info("Recupero asta CHIUSA id=%d giocatore=%s", asta["id"], asta["giocatore"])
         if asta["offerente_team_id"]:
             await chiedi_anni(context, asta["id"])
         else:
-            # RFA senza offerte — contatta il proprietario
-            from handlers.firma import _chiedi_firma_proprietario_senza_offerte
             await _chiedi_firma_proprietario_senza_offerte(context, asta["id"])
         await aggiorna_canale(context, asta["id"])
 
-    # Aste in PAREGGIO: il proprietario non ha ancora risposto
     in_pareggio = db.get_aste_in_pareggio()
     for asta in in_pareggio:
         if asta["anni_offerti"]:
@@ -95,7 +99,19 @@ async def recupera_stati_pendenti(context: ContextTypes.DEFAULT_TYPE):
             await aggiorna_canale(context, asta["id"])
 
     if chiuse or in_pareggio:
-        logger.info("Recupero completato: %d CHIUSE, %d PAREGGIO", len(chiuse), len(in_pareggio))
+        msg = f"🔄 Bot riavviato. Recuperate {len(chiuse)} aste CHIUSE e {len(in_pareggio)} in PAREGGIO."
+        logger.info(msg)
+        await _send_log(context.bot, msg)
+
+
+async def cmd_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Solo dev_id può riavviare il bot."""
+    dev_id = utils.load_globals().get("dev_id")
+    if not dev_id or update.effective_user.id != dev_id:
+        return
+    await update.message.reply_text("🔄 Riavvio in corso...")
+    logger.info("Reboot richiesto da dev %d", update.effective_user.id)
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 def main():
@@ -113,10 +129,9 @@ def main():
     for h in user_handlers():
         app.add_handler(h)
 
+    app.add_handler(CommandHandler("reboot", cmd_reboot))
     app.add_error_handler(error_handler)
     app.job_queue.run_repeating(check_scadenze, interval=60, first=10)
-
-    # Recupera stati pendenti 5 secondi dopo l'avvio
     app.job_queue.run_once(recupera_stati_pendenti, when=5)
 
     logger.info("Bot avviato.")

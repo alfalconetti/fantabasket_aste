@@ -32,7 +32,8 @@ def init_db():
                 creata_at            TEXT    NOT NULL,
                 scade_at             TEXT    NOT NULL,
                 conclusa_at          TEXT,
-                firmato_at           TEXT
+                firmato_at           TEXT,
+                stagione             TEXT
             );
 
             CREATE TABLE IF NOT EXISTS offerte (
@@ -74,6 +75,7 @@ def _migrate():
     migrazioni = [
         "ALTER TABLE aste ADD COLUMN anni_contratto INTEGER",
         "ALTER TABLE aste ADD COLUMN firmato_at TEXT",
+        "ALTER TABLE aste ADD COLUMN stagione TEXT",
         "ALTER TABLE aste ADD COLUMN notifica_15min INTEGER NOT NULL DEFAULT 0",
     ]
     with get_conn() as conn:
@@ -86,13 +88,13 @@ def _migrate():
 
 # ── aste ──────────────────────────────────────────────────────────────────────
 
-def crea_asta(tipo, giocatore, squadra_proprietaria, creata_at, scade_at, vecchio_compenso=None):
+def crea_asta(tipo, giocatore, squadra_proprietaria, creata_at, scade_at, vecchio_compenso=None, stagione=None):
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO aste
-               (tipo, giocatore, squadra_proprietaria, vecchio_compenso, creata_at, scade_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (tipo, giocatore, squadra_proprietaria, vecchio_compenso, creata_at, scade_at),
+               (tipo, giocatore, squadra_proprietaria, vecchio_compenso, creata_at, scade_at, stagione)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (tipo, giocatore, squadra_proprietaria, vecchio_compenso, creata_at, scade_at, stagione),
         )
         return cur.lastrowid
 
@@ -137,12 +139,12 @@ def giocatore_gia_in_asta(giocatore):
         return row is not None
 
 
-def team_ha_rfa_stagione(team_id: str) -> bool:
-    """True se il team ha già usato la sua RFA questa stagione (qualsiasi stato)."""
+def team_ha_rfa_stagione(team_id: str, stagione: str) -> bool:
+    """True se il team ha già usato la sua RFA in questa stagione."""
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id FROM aste WHERE squadra_proprietaria=? AND tipo='RFA'",
-            (team_id,),
+            "SELECT id FROM aste WHERE squadra_proprietaria=? AND tipo='RFA' AND stagione=?",
+            (team_id, stagione),
         ).fetchone()
         return row is not None
 

@@ -33,6 +33,10 @@ def get_log_channel_id() -> int | None:
     return load_globals().get("log_channel_id")
 
 
+def get_stagione_corrente() -> str:
+    return load_globals().get("stagione_corrente", "2026")
+
+
 def is_mercato_aperto() -> bool:
     return load_globals().get("mercato_aperto", True)
 
@@ -200,10 +204,9 @@ def build_canale_message(asta: dict, offerte: list, teams_map: dict) -> str:
 
     elif stato == "PAREGGIO":
         anni = asta["anni_offerti"] if asta["anni_offerti"] else "?"
-        team_vince = teams_map.get(asta["offerente_team_id"], asta["offerente_team_id"]) if asta["offerente_team_id"] else "?"
         prop_nome = teams_map.get(asta["squadra_proprietaria"], "") if asta["squadra_proprietaria"] else ""
         footer = (
-            f"{corrente} × {anni} ann{'o' if anni == 1 else 'i'} <i>(offerta di {team_vince})</i>\n\n"
+            f"{corrente} × {anni} ann{'o' if anni == 1 else 'i'}\n\n"
             f"⚖️ <b>IN ATTESA DI PAREGGIO</b>\n"
             f"⏳ <b>{prop_nome}</b> ha 24h per decidere se pareggiare\n"
             f"<i>(dalla chiusura: {format_dt(asta['conclusa_at'])})</i>"

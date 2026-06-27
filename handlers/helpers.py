@@ -82,15 +82,17 @@ async def notifica_admin_group(context, testo: str):
 
 
 async def log_warn(context, testo: str):
-    """Manda un warning sia al logger che al canale log."""
+    """Manda un warning sia al logger che al canale log con orario."""
     logger.warning(testo)
     log_channel_id = utils.get_log_channel_id()
     if not log_channel_id:
         return
+    from datetime import datetime, timezone
+    ora = utils.format_dt(datetime.now(timezone.utc).isoformat())
     try:
         await context.bot.send_message(
             chat_id=log_channel_id,
-            text=f"⚠️ {testo}",
+            text=f"⚠️ 🕐 {ora}\n{testo}",
             parse_mode="HTML",
         )
     except Exception as e:

@@ -234,7 +234,7 @@ def get_handlers():
     return [
         CommandHandler("me",       cmd_me),
         CommandHandler("autocap",   _autocap_from_user),
-        CommandHandler("auto_slot",  _auto_slot_from_user),
+        CommandHandler("autoslot",   _auto_slot_from_user),
         CommandHandler("watched",  cmd_watched),
         CommandHandler("lista_fa", cmd_lista_fa),
         CallbackQueryHandler(watch_callback,         pattern=r"^watch:\d+$"),
