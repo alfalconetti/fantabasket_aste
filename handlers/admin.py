@@ -19,7 +19,7 @@ import database as db
 import teams as tm
 import utils
 import settings
-from handlers.helpers import aggiorna_canale as _aggiorna_canale
+from handlers.helpers import aggiorna_canale as _aggiorna_canale, log_warn as _log_warn
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +170,14 @@ async def set_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
         return
 
+    vecchio = team["cap_disponibile"]
     tm.set_cap(team_id, valore)
     await update.message.reply_text(
         f"✅ Cap di <b>{team['nome']}</b> impostato a <b>{valore}M</b>.", parse_mode="HTML"
     )
+    await _notifica_gm_cap_slot(context, team,
+        f"ℹ️ Il tuo cap è stato modificato da un admin.\n"
+        f"Cap: {vecchio}M → <b>{valore}M</b>")
     logger.info("set_cap: team=%s valore=%d admin=%d", team_id, valore, update.effective_user.id)
 
 
@@ -202,10 +206,14 @@ async def set_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
         return
 
+    vecchio = team["slot_disponibili"]
     tm.set_slot(team_id, valore)
     await update.message.reply_text(
         f"✅ Slot di <b>{team['nome']}</b> impostati a <b>{valore}</b>.", parse_mode="HTML"
     )
+    await _notifica_gm_cap_slot(context, team,
+        f"ℹ️ I tuoi slot sono stati modificati da un admin.\n"
+        f"Slot: {vecchio} → <b>{valore}</b>")
     logger.info("set_slot: team=%s valore=%d admin=%d", team_id, valore, update.effective_user.id)
 
 
@@ -354,8 +362,7 @@ async def admin_chiudi_callback(update: Update, context: ContextTypes.DEFAULT_TY
             )
         else:
             db.annulla_asta(asta_id)
-            from handlers.offerte import _aggiorna_canale as _ag2
-            await _ag2(context, asta_id)
+            await _aggiorna_canale(context, asta_id)
             await query.edit_message_text(
                 f"✅ Asta FA <b>{asta['giocatore']}</b> chiusa senza offerte.",
                 parse_mode="HTML",
@@ -425,7 +432,7 @@ async def admin_annulla_callback(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.warning("annuncio annullamento canale: %s", e)
+        await _log_warn(context, f"Annuncio annullamento canale fallito: {e}")
 
     await query.edit_message_text(
         f"✅ Asta <b>{asta['giocatore']}</b> annullata.", parse_mode="HTML"
@@ -525,6 +532,19 @@ async def reset_rfa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "SELECT COUNT(*) as n FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA')"
         ).fetchone()
         n = result["n"]
+        # elimina prima i record collegati per rispettare i vincoli FK
+        conn.execute(
+            """DELETE FROM offerte WHERE asta_id IN (
+               SELECT id FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA'))"""
+        )
+        conn.execute(
+            """DELETE FROM aste_watch WHERE asta_id IN (
+               SELECT id FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA'))"""
+        )
+        conn.execute(
+            """DELETE FROM contratti WHERE asta_id IN (
+               SELECT id FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA'))"""
+        )
         conn.execute("DELETE FROM aste WHERE tipo='RFA' AND stato IN ('CONCLUSA','ANNULLATA')")
 
     await query.edit_message_text(
@@ -579,6 +599,15 @@ async def set_cap_penalizzato(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info("set_cap_penalizzato: team=%s valore=%d", team_id, valore)
 
 
+async def _notifica_gm_cap_slot(context, team: dict, testo: str):
+    """Notifica tutti i GM di una squadra quando admin modifica cap o slot."""
+    for gm_id in team["gm_ids"]:
+        try:
+            await context.bot.send_message(chat_id=gm_id, text=testo, parse_mode="HTML")
+        except Exception as e:
+            await _log_warn(context, f"Notifica cap/slot GM {gm_id} ({team['nome']}) fallita: {e}")
+
+
 # ── /add_cap ─────────────────────────────────────────────────────────────────
 
 async def add_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -614,7 +643,96 @@ async def add_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Cap di <b>{team['nome']}</b>: {team['cap_disponibile']}M {segno}{delta}M → <b>{nuovo_cap}M</b>",
         parse_mode="HTML",
     )
+    await _notifica_gm_cap_slot(context, team,
+        f"ℹ️ Il tuo cap è stato modificato da un admin.\n"
+        f"Cap: {team['cap_disponibile']}M {segno}{delta}M → <b>{nuovo_cap}M</b>")
     logger.info("add_cap: team=%s delta=%d nuovo=%d admin=%d", team_id, delta, nuovo_cap, update.effective_user.id)
+
+
+# ── /add_slot ────────────────────────────────────────────────────────────────
+
+async def add_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Non sei autorizzato.")
+        return
+    if len(context.args) != 2:
+        await update.message.reply_text("Uso: /add_slot <team_id> <importo>\nEsempio: /add_slot bulls 1 oppure /add_slot bulls -1")
+        return
+    team_id = context.args[0]
+    try:
+        delta = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ L'importo deve essere un numero intero.")
+        return
+    team = tm.get_team_by_id(team_id)
+    if team is None:
+        await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
+        return
+    nuovo = team["slot_disponibili"] + delta
+    if nuovo < 0:
+        await update.message.reply_text(f"❌ Gli slot non possono diventare negativi ({team['slot_disponibili']} + {delta} = {nuovo}).")
+        return
+    tm.set_slot(team_id, nuovo)
+    segno = "+" if delta >= 0 else ""
+    await update.message.reply_text(
+        f"✅ Slot di <b>{team['nome']}</b>: {team['slot_disponibili']} {segno}{delta} → <b>{nuovo}</b>", parse_mode="HTML"
+    )
+    await _notifica_gm_cap_slot(context, team,
+        f"ℹ️ I tuoi slot sono stati modificati da un admin.\nSlot: {team['slot_disponibili']} {segno}{delta} → <b>{nuovo}</b>")
+    logger.info("add_slot: team=%s delta=%d nuovo=%d admin=%d", team_id, delta, nuovo, update.effective_user.id)
+
+
+# ── /annulla_offerta ──────────────────────────────────────────────────────────
+
+async def annulla_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Non sei autorizzato.")
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /annulla_offerta <asta_id>")
+        return
+    try:
+        asta_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID non valido.")
+        return
+    asta = db.get_asta(asta_id)
+    if not asta or asta["stato"] != "APERTA":
+        await update.message.reply_text("❌ Asta non trovata o non aperta.")
+        return
+
+    result = db.annulla_ultima_offerta(asta_id)
+    if result is None:
+        await update.message.reply_text("❌ Nessuna offerta da annullare.")
+        return
+
+    teams_map = {t["id"]: t["nome"] for t in tm.get_all_teams()}
+    team_el = teams_map.get(result["team_eliminato"], result["team_eliminato"])
+    nuovo_team = teams_map.get(result["nuovo_team"], "nessuno") if result["nuovo_team"] else "nessuno"
+
+    await _aggiorna_canale(context, asta_id)
+
+    channel_id = utils.get_channel_id()
+    try:
+        await context.bot.send_message(
+            chat_id=channel_id,
+            text=(
+                f"⚠️ <b>Offerta annullata da admin</b>\n"
+                f"🏀 {asta['giocatore']}\n"
+                f"Offerta eliminata: {result['offerta_eliminata']}M — {team_el}\n"
+                f"Offerta attuale: {result['nuovo_importo']}M — {nuovo_team}"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await _log_warn(context, f"Annuncio annulla_offerta canale fallito: {e}")
+
+    await update.message.reply_text(
+        f"✅ Ultima offerta di <b>{team_el}</b> ({result['offerta_eliminata']}M) annullata.\n"
+        f"Offerta attuale: <b>{result['nuovo_importo']}M — {nuovo_team}</b>",
+        parse_mode="HTML",
+    )
+    logger.info("annulla_offerta: asta_id=%d offerta=%d admin=%d", asta_id, result["offerta_eliminata"], update.effective_user.id)
 
 
 # ── /autocap ─────────────────────────────────────────────────────────────────
@@ -633,7 +751,7 @@ async def autocap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args or len(context.args) != 1:
         await update.message.reply_text(
-            "Uso: /autocap &lt;importo&gt;\nEsempio: /autocap 15\n\n"
+            "Uso: /autocap <importo>\nEsempio: /autocap 15\n\n"
             "<i>⚠️ Usare solo in caso di necessità (es. trade appena avvenuta). "
             "La richiesta viene segnalata agli admin per verifica. "
             "In caso di dichiarazione falsa saranno applicate penalità.</i>",
@@ -693,6 +811,67 @@ async def autocap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("autocap: team=%s importo=%d gm=%d", team["id"], importo, user.id)
 
 
+# ── /auto_slot ───────────────────────────────────────────────────────────────
+
+async def auto_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    team = tm.get_team_by_gm(user.id)
+    if team is None:
+        await update.message.reply_text("⛔ Non sei registrato come GM.")
+        return
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text(
+            "Uso: /auto_slot <importo>\nEsempio: /auto_slot 1\n\n"
+            "<i>⚠️ Usare solo in caso di necessità. La richiesta viene segnalata agli admin per verifica.</i>",
+            parse_mode="HTML",
+        )
+        return
+    try:
+        importo = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ L'importo deve essere un numero intero.")
+        return
+    if importo <= 0:
+        await update.message.reply_text("❌ L'importo deve essere positivo.")
+        return
+
+    vecchio = team["slot_disponibili"]
+    nuovo = vecchio + importo
+    tm.set_slot(team["id"], nuovo)
+
+    import utils as _utils
+    from datetime import datetime, timezone
+    ora = _utils.format_dt(datetime.now(timezone.utc).isoformat())
+
+    await update.message.reply_text(
+        f"✅ Slot aggiunti: <b>+{importo}</b>\nI tuoi slot ora sono <b>{nuovo}</b>.\n\n"
+        f"<i>La richiesta è stata segnalata agli admin.</i>",
+        parse_mode="HTML",
+    )
+
+    notifica = (
+        f"⚠️ <b>AUTO_SLOT</b>\n"
+        f"👤 {user.first_name} (@{user.username or '?'}) — <b>{team['nome']}</b>\n"
+        f"🪑 +{importo} slot (da {vecchio} a {nuovo})\n"
+        f"🕐 {ora}\n\n"
+        f"Verifica che la dichiarazione sia corretta."
+    )
+    admin_group_id = _utils.get_admin_group_id()
+    if admin_group_id:
+        try:
+            await context.bot.send_message(chat_id=admin_group_id, text=notifica, parse_mode="HTML")
+        except Exception as e:
+            logger.warning("notifica auto_slot gruppo admin: %s", e)
+    globals_data = _utils.load_globals()
+    dev_id = globals_data.get("dev_id")
+    if dev_id and dev_id != admin_group_id:
+        try:
+            await context.bot.send_message(chat_id=dev_id, text=notifica, parse_mode="HTML")
+        except Exception as e:
+            logger.warning("notifica auto_slot dev: %s", e)
+    logger.info("auto_slot: team=%s importo=%d gm=%d", team["id"], importo, user.id)
+
+
 # ── /admin ────────────────────────────────────────────────────────────────────
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -708,8 +887,10 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/reset_rfa — resetta flag RFA per nuova stagione\n"
         "/set_cap &lt;team_id&gt; &lt;valore&gt; — imposta cap squadra\n"
         "/add_cap &lt;team_id&gt; &lt;importo&gt; — aggiunge/sottrae cap (accetta negativi)\n"
-        "/set_cap_penalizzato &lt;team_id&gt; &lt;valore&gt; — imposta penalità cap\n"
         "/set_slot &lt;team_id&gt; &lt;valore&gt; — imposta slot squadra\n"
+        "/add_slot &lt;team_id&gt; &lt;importo&gt; — aggiunge/sottrae slot\n"
+        "/annulla_offerta &lt;asta_id&gt; — annulla ultima offerta\n"
+        "/set_cap_penalizzato &lt;team_id&gt; &lt;valore&gt; — imposta penalità cap\n"
         "/set_fase &lt;offseason|regular&gt; — cambia fase e scala cap\n"
         "/apri_mercato — apre il mercato FA\n"
         "/chiudi_mercato — chiude il mercato FA\n"
@@ -737,6 +918,8 @@ def get_handlers():
         CallbackQueryHandler(reset_rfa_callback, pattern=r"^reset_rfa:conferma$"),
         CommandHandler("admin",           cmd_admin),
         CommandHandler("add_cap",          add_cap),
+        CommandHandler("add_slot",          add_slot),
+        CommandHandler("annulla_offerta",   annulla_offerta),
         CallbackQueryHandler(admin_chiudi_callback,  pattern=r"^admin_chiudi:\d+$"),
         CallbackQueryHandler(admin_annulla_callback, pattern=r"^admin_annulla:\d+$"),
         CallbackQueryHandler(admin_noop_callback,    pattern=r"^admin_noop$"),

@@ -28,7 +28,7 @@ import database as db
 import teams as tm
 import utils
 import settings
-from handlers.helpers import aggiorna_canale as _aggiorna_canale, notifica_admin_group as _notifica_admin_group, notifica_watchers as _notifica_watchers
+from handlers.helpers import aggiorna_canale as _aggiorna_canale, notifica_admin_group as _notifica_admin_group, notifica_watchers as _notifica_watchers, log_warn as _log_warn
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ async def chiedi_anni(context: ContextTypes.DEFAULT_TYPE, asta_id: int):
             )
             inviato = True
         except Exception as e:
-            logger.warning("Impossibile contattare GM %d: %s", gm_id, e)
+            await _log_warn(context, f"Impossibile contattare GM {gm_id}: {e}")
 
     if not inviato:
         await _notifica_admin_group(
@@ -183,17 +183,15 @@ async def firma_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if asta["tipo"] == "FA":
         await _registra_firma_finale(context, asta_id, anni, team["id"], query=query)
     else:
+        # Salva prima nel DB, poi contatta proprietario, poi aggiorna canale
         db.set_anni_offerti(asta_id, anni)
-        from handlers.offerte import _aggiorna_canale
+        await _chiedi_pareggio(context, asta_id, anni)
         await _aggiorna_canale(context, asta_id)
-
-        team_nome = team["nome"]
         await query.edit_message_text(
             f"✅ Anni registrati: <b>{anni}</b> per <b>{asta['giocatore']}</b> a <b>{asta['offerta_corrente']}M</b>.\n\n"
             f"Il proprietario dei diritti ha 24 ore per decidere se pareggiare l'offerta.",
             parse_mode="HTML",
         )
-        await _chiedi_pareggio(context, asta_id, anni)
 
 
 # ── firma automatica (timeout vincitore) ─────────────────────────────────────
@@ -212,7 +210,6 @@ async def firma_automatica(context: ContextTypes.DEFAULT_TYPE):
         anni = anni_minimi(asta["offerta_corrente"])
         logger.info("Firma automatica RFA vincitore (anni minimi %d): asta_id=%d", anni, asta_id)
         db.set_anni_offerti(asta_id, anni)
-        from handlers.offerte import _aggiorna_canale
         await _aggiorna_canale(context, asta_id)
 
         team = tm.get_team_by_id(asta["offerente_team_id"])
@@ -229,7 +226,7 @@ async def firma_automatica(context: ContextTypes.DEFAULT_TYPE):
                         parse_mode="HTML",
                     )
                 except Exception as e:
-                    logger.warning("notifica auto vincitore RFA GM %d: %s", gm_id, e)
+                    await _log_warn(context, f"Notifica auto vincitore RFA fallita GM {gm_id}: {e}")
 
         await _chiedi_pareggio(context, asta_id, anni)
 
@@ -283,7 +280,7 @@ async def _chiedi_pareggio(context, asta_id: int, anni_vincitore: int):
             )
             inviato = True
         except Exception as e:
-            logger.warning("chiedi_pareggio GM %d: %s", gm_id, e)
+            await _log_warn(context, f"Impossibile contattare GM pareggio {gm_id}: {e}")
 
     if not inviato:
         await _notifica_admin_group(
@@ -450,7 +447,7 @@ async def pareggio_automatico(context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="HTML",
                 )
             except Exception as e:
-                logger.warning("notifica pareggio auto GM %d: %s", gm_id, e)
+                await _log_warn(context, f"Notifica pareggio auto fallita GM {gm_id}: {e}")
 
     await _registra_firma_finale(
         context, asta_id, asta["anni_offerti"], asta["offerente_team_id"]
@@ -494,7 +491,7 @@ async def _chiedi_firma_proprietario_senza_offerte(context, asta_id: int):
             )
             inviato = True
         except Exception as e:
-            logger.warning("chiedi_firma_prop GM %d: %s", gm_id, e)
+            await _log_warn(context, f"Impossibile contattare GM firma proprietario {gm_id}: {e}")
 
     if not inviato:
         await _notifica_admin_group(
@@ -667,7 +664,7 @@ async def _registra_firma_finale(
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.warning("Annuncio firma canale: %s", e)
+        await _log_warn(context, f"Annuncio firma canale fallito: {e}")
 
     # notifica watcher della firma
     team_nome_w = team["nome"] if team else team_id

@@ -29,6 +29,10 @@ def get_admin_group_id() -> int | None:
     return load_globals().get("admin_group_id")
 
 
+def get_log_channel_id() -> int | None:
+    return load_globals().get("log_channel_id")
+
+
 def is_mercato_aperto() -> bool:
     return load_globals().get("mercato_aperto", True)
 

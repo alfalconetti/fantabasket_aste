@@ -236,7 +236,7 @@ def get_cap_virtuale(team_id: str) -> int:
         row = conn.execute(
             """SELECT COALESCE(SUM(offerta_corrente), 0) as totale
                FROM aste
-               WHERE offerente_team_id=? AND stato='APERTA'""",
+               WHERE offerente_team_id=? AND stato IN ('APERTA','PAREGGIO')""",
             (team_id,),
         ).fetchone()
         return row["totale"] if row else 0
@@ -247,7 +247,7 @@ def get_slot_virtuali(team_id: str) -> int:
         row = conn.execute(
             """SELECT COUNT(*) as totale
                FROM aste
-               WHERE offerente_team_id=? AND stato='APERTA'""",
+               WHERE offerente_team_id=? AND stato IN ('APERTA','PAREGGIO')""",
             (team_id,),
         ).fetchone()
         return row["totale"] if row else 0
@@ -269,10 +269,63 @@ def get_offerte_vincenti_team(team_id: str) -> list:
         return conn.execute(
             """SELECT id, tipo, giocatore, offerta_corrente, scade_at
                FROM aste
-               WHERE offerente_team_id=? AND stato='APERTA'
+               WHERE offerente_team_id=? AND stato IN ('APERTA','PAREGGIO')
                ORDER BY scade_at""",
             (team_id,),
         ).fetchall()
+
+
+# ── gestione offerte ─────────────────────────────────────────────────────────
+
+def annulla_ultima_offerta(asta_id: int) -> dict | None:
+    """
+    Elimina l'ultima offerta e ripristina quella precedente (o 0 se era la prima).
+    Resetta notifica_15min a 0.
+    Ritorna dict con info per aggiornare il canale, o None se non c'era offerta.
+    """
+    with get_conn() as conn:
+        offerte = conn.execute(
+            "SELECT * FROM offerte WHERE asta_id=? ORDER BY id", (asta_id,)
+        ).fetchall()
+
+        if not offerte:
+            return None
+
+        ultima = offerte[-1]
+        conn.execute("DELETE FROM offerte WHERE id=?", (ultima["id"],))
+
+        if len(offerte) >= 2:
+            precedente = offerte[-2]
+            nuovo_importo = precedente["importo"]
+            nuovo_team = precedente["team_id"]
+        else:
+            # era la prima offerta
+            nuovo_importo = 0
+            nuovo_team = None
+
+        # calcola nuova scadenza: 18h dall'offerta precedente o dalla creazione
+        from datetime import datetime, timezone, timedelta
+        import settings as _s
+        ore = _s.durata_asta_ore()
+        if len(offerte) >= 2:
+            base_dt = datetime.fromisoformat(offerte[-2]["timestamp"])
+        else:
+            asta = conn.execute("SELECT creata_at FROM aste WHERE id=?", (asta_id,)).fetchone()
+            base_dt = datetime.fromisoformat(asta["creata_at"])
+        nuova_scadenza = (base_dt.replace(tzinfo=timezone.utc) + timedelta(hours=ore)).isoformat()
+
+        conn.execute(
+            """UPDATE aste SET offerta_corrente=?, offerente_team_id=?,
+               scade_at=?, notifica_15min=0 WHERE id=?""",
+            (nuovo_importo, nuovo_team, nuova_scadenza, asta_id),
+        )
+        return {
+            "offerta_eliminata": ultima["importo"],
+            "team_eliminato": ultima["team_id"],
+            "nuovo_importo": nuovo_importo,
+            "nuovo_team": nuovo_team,
+            "nuova_scadenza": nuova_scadenza,
+        }
 
 
 # ── watch ─────────────────────────────────────────────────────────────────────

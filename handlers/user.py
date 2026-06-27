@@ -12,7 +12,7 @@ import teams as tm
 import utils
 import settings
 from handlers.helpers import teams_map
-from handlers.admin import autocap as _autocap_from_user
+from handlers.admin import autocap as _autocap_from_user, auto_slot as _auto_slot_from_user
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +233,8 @@ async def lista_fa_avvia_callback(update: Update, context: ContextTypes.DEFAULT_
 def get_handlers():
     return [
         CommandHandler("me",       cmd_me),
-        CommandHandler("autocap",  _autocap_from_user),
+        CommandHandler("autocap",   _autocap_from_user),
+        CommandHandler("auto_slot",  _auto_slot_from_user),
         CommandHandler("watched",  cmd_watched),
         CommandHandler("lista_fa", cmd_lista_fa),
         CallbackQueryHandler(watch_callback,         pattern=r"^watch:\d+$"),

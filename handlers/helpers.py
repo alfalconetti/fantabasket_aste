@@ -46,6 +46,15 @@ async def aggiorna_canale(context, asta_id: int):
     except Exception as e:
         if "Message is not modified" not in str(e):
             logger.warning("edit_message_text fallita asta_id=%d: %s", asta_id, e)
+            log_channel_id = utils.get_log_channel_id()
+            if log_channel_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=log_channel_id,
+                        text=f"⚠️ Aggiornamento canale fallito asta_id={asta_id}: {e}",
+                    )
+                except Exception:
+                    pass
 
 
 async def notifica_watchers(context, asta_id: int, testo: str, escludi_gm: int = None):
@@ -70,3 +79,19 @@ async def notifica_admin_group(context, testo: str):
         )
     except Exception as e:
         logger.warning("notifica admin group fallita: %s", e)
+
+
+async def log_warn(context, testo: str):
+    """Manda un warning sia al logger che al canale log."""
+    logger.warning(testo)
+    log_channel_id = utils.get_log_channel_id()
+    if not log_channel_id:
+        return
+    try:
+        await context.bot.send_message(
+            chat_id=log_channel_id,
+            text=f"⚠️ {testo}",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("log_warn fallito: %s", e)

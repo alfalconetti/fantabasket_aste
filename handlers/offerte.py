@@ -17,7 +17,7 @@ import database as db
 import teams as tm
 import utils
 import settings
-from handlers.helpers import aggiorna_canale, notifica_watchers, teams_map
+from handlers.helpers import aggiorna_canale, notifica_watchers, teams_map, log_warn
 
 logger = logging.getLogger(__name__)
 
@@ -386,7 +386,7 @@ async def _esegui_offerta(context, team, asta_id: int, importo: int, gm_id: int)
                         parse_mode="HTML",
                     )
                 except Exception as e:
-                    logger.warning("notifica prop RFA %d: %s", gm_id_prop, e)
+                    await log_warn(context, f"Notifica proprietario RFA {gm_id_prop} fallita: {e}")
 
     logger.info("Offerta: asta_id=%d team=%s importo=%d", asta_id, team["id"], importo)
     return None
