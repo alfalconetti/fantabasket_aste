@@ -579,6 +579,120 @@ async def set_cap_penalizzato(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info("set_cap_penalizzato: team=%s valore=%d", team_id, valore)
 
 
+# ── /add_cap ─────────────────────────────────────────────────────────────────
+
+async def add_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Aggiunge (o sottrae se negativo) cap a una squadra. Più comodo di set_cap per aggiustamenti."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if len(context.args) != 2:
+        await update.message.reply_text("Uso: /add_cap <team_id> <importo>\nEsempio: /add_cap bulls 15 oppure /add_cap bulls -10")
+        return
+
+    team_id = context.args[0]
+    try:
+        delta = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ L'importo deve essere un numero intero (anche negativo).")
+        return
+
+    team = tm.get_team_by_id(team_id)
+    if team is None:
+        await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
+        return
+
+    nuovo_cap = team["cap_disponibile"] + delta
+    if nuovo_cap < 0:
+        await update.message.reply_text(f"❌ Il cap non può diventare negativo ({team['cap_disponibile']}M + {delta}M = {nuovo_cap}M).")
+        return
+
+    tm.set_cap(team_id, nuovo_cap)
+    segno = "+" if delta >= 0 else ""
+    await update.message.reply_text(
+        f"✅ Cap di <b>{team['nome']}</b>: {team['cap_disponibile']}M {segno}{delta}M → <b>{nuovo_cap}M</b>",
+        parse_mode="HTML",
+    )
+    logger.info("add_cap: team=%s delta=%d nuovo=%d admin=%d", team_id, delta, nuovo_cap, update.effective_user.id)
+
+
+# ── /autocap ─────────────────────────────────────────────────────────────────
+
+async def autocap(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Permette a un GM di aggiungere cap autonomamente (es. dopo una trade notturna).
+    Il cap viene aggiunto immediatamente. Una notifica viene inviata al gruppo admin e al dev.
+    Se il GM ha mentito, l'admin interviene manualmente con penalità.
+    """
+    user = update.effective_user
+    team = tm.get_team_by_gm(user.id)
+    if team is None:
+        await update.message.reply_text("⛔ Non sei registrato come GM.")
+        return
+
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text(
+            "Uso: /autocap &lt;importo&gt;\nEsempio: /autocap 15\n\n"
+            "<i>⚠️ Usare solo in caso di necessità (es. trade appena avvenuta). "
+            "La richiesta viene segnalata agli admin per verifica. "
+            "In caso di dichiarazione falsa saranno applicate penalità.</i>",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        importo = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ L'importo deve essere un numero intero.")
+        return
+
+    if importo <= 0:
+        await update.message.reply_text("❌ L'importo deve essere positivo.")
+        return
+
+    vecchio_cap = team["cap_disponibile"]
+    nuovo_cap = vecchio_cap + importo
+    tm.set_cap(team["id"], nuovo_cap)
+
+    import utils as _utils
+    from datetime import datetime, timezone
+    ora = _utils.format_dt(datetime.now(timezone.utc).isoformat())
+
+    await update.message.reply_text(
+        f"✅ Cap aggiunto: <b>+{importo}M</b>\nIl tuo cap ora è <b>{nuovo_cap}M</b>.\n\n"
+        f"<i>La richiesta è stata segnalata agli admin.</i>",
+        parse_mode="HTML",
+    )
+
+    notifica = (
+        f"⚠️ <b>AUTOCAP</b>\n"
+        f"👤 {user.first_name} (@{user.username or '?'}) — <b>{team['nome']}</b>\n"
+        f"💰 +{importo}M (da {vecchio_cap}M a {nuovo_cap}M)\n"
+        f"🕐 {ora}\n\n"
+        f"Verifica che la dichiarazione sia corretta."
+    )
+
+    # notifica gruppo admin
+    admin_group_id = _utils.get_admin_group_id()
+    if admin_group_id:
+        try:
+            await context.bot.send_message(chat_id=admin_group_id, text=notifica, parse_mode="HTML")
+        except Exception as e:
+            logger.warning("notifica autocap gruppo admin: %s", e)
+
+    # notifica dev
+    globals_data = _utils.load_globals()
+    dev_id = globals_data.get("dev_id")
+    if dev_id and dev_id != admin_group_id:
+        try:
+            await context.bot.send_message(chat_id=dev_id, text=notifica, parse_mode="HTML")
+        except Exception as e:
+            logger.warning("notifica autocap dev: %s", e)
+
+    logger.info("autocap: team=%s importo=%d gm=%d", team["id"], importo, user.id)
+
+
 # ── /admin ────────────────────────────────────────────────────────────────────
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -593,6 +707,7 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/annulla_asta &lt;asta_id&gt; — annulla un'asta\n"
         "/reset_rfa — resetta flag RFA per nuova stagione\n"
         "/set_cap &lt;team_id&gt; &lt;valore&gt; — imposta cap squadra\n"
+        "/add_cap &lt;team_id&gt; &lt;importo&gt; — aggiunge/sottrae cap (accetta negativi)\n"
         "/set_cap_penalizzato &lt;team_id&gt; &lt;valore&gt; — imposta penalità cap\n"
         "/set_slot &lt;team_id&gt; &lt;valore&gt; — imposta slot squadra\n"
         "/set_fase &lt;offseason|regular&gt; — cambia fase e scala cap\n"
@@ -621,6 +736,7 @@ def get_handlers():
         CommandHandler("set_cap_penalizzato",   set_cap_penalizzato),
         CallbackQueryHandler(reset_rfa_callback, pattern=r"^reset_rfa:conferma$"),
         CommandHandler("admin",           cmd_admin),
+        CommandHandler("add_cap",          add_cap),
         CallbackQueryHandler(admin_chiudi_callback,  pattern=r"^admin_chiudi:\d+$"),
         CallbackQueryHandler(admin_annulla_callback, pattern=r"^admin_annulla:\d+$"),
         CallbackQueryHandler(admin_noop_callback,    pattern=r"^admin_noop$"),

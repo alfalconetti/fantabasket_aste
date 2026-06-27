@@ -413,7 +413,7 @@ async def inserisci_importo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     errore = await _esegui_offerta(context, team, asta_id, importo, user.id)
     if errore:
-        rimani = "bassa" in errore or "insufficiente" in errore or "impegnati" in errore
+        rimani = "bassa" in errore or "insufficiente" in errore
         suffix = f"\n\nInserisci un nuovo importo:\n<i>Per annullare: /annulla</i>" if rimani else ""
         await update.message.reply_text(f"❌ {errore}{suffix}", parse_mode="HTML")
         return INSERISCI_IMPORTO if rimani else ConversationHandler.END
