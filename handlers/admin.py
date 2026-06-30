@@ -166,6 +166,9 @@ async def set_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if valore < 0:
         await update.message.reply_text("❌ Il cap non può essere negativo.")
         return
+    if valore > settings.cap_massimo():
+        await update.message.reply_text(f"❌ Il cap non può superare {settings.cap_massimo()}M.")
+        return
 
     team = tm.get_team_by_id(team_id)
     if team is None:
@@ -202,6 +205,9 @@ async def set_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if valore < 0:
         await update.message.reply_text("❌ Gli slot non possono essere negativi.")
+        return
+    if valore > settings.slot_massimo():
+        await update.message.reply_text(f"❌ Gli slot non possono superare {settings.slot_massimo()}.")
         return
 
     team = tm.get_team_by_id(team_id)
@@ -694,6 +700,9 @@ async def add_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nuovo_cap < 0:
         await update.message.reply_text(f"❌ Il cap non può diventare negativo ({team['cap_disponibile']}M + {delta}M = {nuovo_cap}M).")
         return
+    if nuovo_cap > settings.cap_massimo():
+        await update.message.reply_text(f"❌ Il cap non può superare {settings.cap_massimo()}M ({team['cap_disponibile']}M + {delta}M = {nuovo_cap}M).")
+        return
 
     tm.set_cap(team_id, nuovo_cap)
     segno = "+" if delta >= 0 else ""
@@ -730,6 +739,9 @@ async def add_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nuovo = team["slot_disponibili"] + delta
     if nuovo < 0:
         await update.message.reply_text(f"❌ Gli slot non possono diventare negativi ({team['slot_disponibili']} + {delta} = {nuovo}).")
+        return
+    if nuovo > settings.slot_massimo():
+        await update.message.reply_text(f"❌ Gli slot non possono superare {settings.slot_massimo()} ({team['slot_disponibili']} + {delta} = {nuovo}).")
         return
     tm.set_slot(team_id, nuovo)
     segno = "+" if delta >= 0 else ""
@@ -981,6 +993,86 @@ async def auto_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("auto_slot: team=%s importo=%d gm=%d", team["id"], importo, user.id)
 
 
+# ── /team ─────────────────────────────────────────────────────────────────────
+
+async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Mostra la situazione completa di una squadra, identica a /me ma per qualsiasi team.
+    Solo admin. Uso: /team <team_id>
+    """
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /team &lt;team_id&gt;\n"
+            "Esempio: /team bulls\n\n"
+            "Usa /listteams per vedere tutti gli ID squadra.",
+            parse_mode="HTML",
+        )
+        return
+
+    team_id = context.args[0]
+    team = tm.get_team_by_id(team_id)
+    if team is None:
+        await update.message.reply_text(
+            f"❌ Team ID '<code>{team_id}</code>' non trovato. Usa /listteams per la lista completa.",
+            parse_mode="HTML",
+        )
+        return
+
+    cap_tot        = team["cap_disponibile"]
+    slot_tot       = team["slot_disponibili"]
+    cap_virtuale   = db.get_cap_virtuale(team_id)
+    slot_impegnati = db.get_slot_virtuali(team_id)
+    cap_libero     = cap_tot - cap_virtuale
+    slot_liberi    = slot_tot - slot_impegnati
+    offerte_vince  = db.get_offerte_vincenti_team(team_id)
+
+    fase = utils.load_globals().get("fase", "offseason")
+    cap_pen = team.get("cap_penalizzato", 0)
+    s = settings.get()
+
+    righe = [
+        f"🏀 <b>{team['nome']}</b> — vista admin",
+        f"<i>ID: <code>{team_id}</code></i>",
+        "",
+        f"💰 Cap disponibile (offseason): <b>{cap_tot}M</b>",
+        f"⏳ Cap virtualmente impegnato: <b>{cap_virtuale}M</b>",
+        f"✅ Cap effettivamente libero: <b>{cap_libero}M</b>",
+    ]
+
+    if fase == "offseason":
+        rfa_attive = db.get_rfa_proprietario(team_id)
+        if rfa_attive:
+            cap_rfa = sum(r["vecchio_compenso"] or 0 for r in rfa_attive)
+            nomi_rfa = ", ".join(r["giocatore"] for r in rfa_attive)
+            righe.append(f"⚠️ Cap occupato da RFA: <b>{cap_rfa}M</b> ({nomi_rfa})")
+        delta = s["cap_offseason"] - s["cap_regular"] + cap_pen
+        cap_rs = cap_libero - delta
+        nota_pen = f", penalità {cap_pen}M" if cap_pen else ""
+        righe.append(f"📉 Cap libero in Regular Season: <b>{cap_rs}M</b> (-{delta}M{nota_pen})")
+
+    righe += [
+        "",
+        f"🪑 Slot totali: <b>{slot_tot}</b>",
+        f"⏳ Slot virtualmente impegnati: <b>{slot_impegnati}</b>",
+        f"✅ Slot effettivamente liberi: <b>{slot_liberi}</b>",
+    ]
+
+    if offerte_vince:
+        righe.append("")
+        righe.append("<i>Offerte vincenti in corso:</i>")
+        for o in offerte_vince:
+            righe.append(
+                f"  • {o['giocatore']} — {o['offerta_corrente']}M "
+                f"(scade {utils.format_dt(o['scade_at'])})"
+            )
+
+    await update.message.reply_text("\n".join(righe), parse_mode="HTML")
+
+
 # ── /admin ────────────────────────────────────────────────────────────────────
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1003,7 +1095,7 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/set_fase &lt;offseason|regular&gt; — cambia fase e scala cap\n"
         "/apri_mercato — apre il mercato FA\n"
         "/chiudi_mercato — chiude il mercato FA\n"
-        "/listteams — lista squadre con ID e cap\n"
+        "/team &lt;team_id&gt; — situazione cap e slot di una squadra (come /me, per admin)\n"
         "/aste — lista aste in corso\n"
         "/admin — questo messaggio"
     )
@@ -1013,6 +1105,7 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def get_handlers():
     return [
         CommandHandler("nuova_rfa",      nuova_rfa),
+        CommandHandler("team",           cmd_team),
         CommandHandler("listteams",      listteams),
         CommandHandler("set_cap",        set_cap),
         CommandHandler("set_slot",       set_slot),

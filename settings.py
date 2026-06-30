@@ -51,3 +51,18 @@ def paginazione_fa() -> int:
 
 def notifica_minuti_scadenza() -> int:
     return get()["notifica_minuti_scadenza"]
+
+def offerta_massima() -> int:
+    """
+    Calcolo derivato: cap_regular - (slot_minimi_rs - 1) * minimo_contrattuale
+    Rappresenta il massimo che una squadra può spendere su un singolo giocatore
+    restando in grado di riempire gli slot minimi rimanenti al minimo salariale.
+    """
+    s = get()
+    return s["cap_regular"] - (s["slot_minimi_rs"] - 1) * s["minimo_contrattuale"]
+
+def slot_massimo() -> int:
+    return get()["slot_massimo"]
+
+def cap_massimo() -> int:
+    return get()["cap_massimo"]

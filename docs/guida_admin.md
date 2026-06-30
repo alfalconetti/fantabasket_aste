@@ -9,6 +9,7 @@
 ## Gestione squadre
 
 `/listteams` — lista squadre con ID cliccabile, cap totale, cap libero (virtuale) e slot liberi
+`/team <team_id>` — situazione completa di una singola squadra: cap totale, cap virtualmente impegnato, cap effettivamente libero, stima cap in regular season, slot, e tutte le offerte vincenti in corso. È la stessa vista che un GM ottiene con `/me`, ma per qualunque squadra. Utile per controlli puntuali senza dover scorrere `/listteams`.
 `/set_cap <team_id> <valore>` — imposta il cap disponibile a un valore assoluto
 `/add_cap <team_id> <importo>` — aggiunge o sottrae cap (accetta negativi)
 `/set_slot <team_id> <valore>` — imposta gli slot disponibili
@@ -41,3 +42,5 @@ Quando modifichi cap o slot, il GM della squadra riceve automaticamente una noti
 - Modifiche manuali al cap/slot possono creare cap virtuale negativo — il bot manda warning automatici al gruppo admin
 - In caso di restart del bot, le aste in CHIUSA e PAREGGIO vengono automaticamente ripristinate dopo 5 secondi
 - Tutti i warning critici finiscono nel canale log configurato in `globals.json`
+- Le eccezioni nei job periodici (controllo scadenze, firma automatica, pareggio automatico, recupero stati al riavvio, backup) vengono ora segnalate anche sul canale log e in privato al dev, oltre che nei log del container — prima della v21 restavano visibili solo nei log Docker
+- L'offerta massima consentita su una singola asta non è più un valore fisso in `settings.json`: viene calcolata come `cap_regular - (slot_minimi_rs - 1) * minimo_contrattuale`, così si aggiorna automaticamente se cambiano questi parametri

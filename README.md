@@ -20,7 +20,7 @@ Sviluppato con [Claude](https://claude.ai) (Anthropic).
 ├── settings.py             # Lettura settings.json (costanti di business)
 ├── scheduler.py            # Job periodico: scadenze e notifiche
 ├── handlers/
-│   ├── helpers.py          # Funzioni condivise (aggiorna_canale, notifica_watchers, log_warn)
+│   ├── helpers.py          # Funzioni condivise (aggiorna_canale, notifica_watchers, log_warn, log_job_error)
 │   ├── offerte.py          # Flusso offerte FA/RFA
 │   ├── firma.py            # Flusso firma, pareggio RFA
 │   ├── user.py             # Comandi utente: /me /watched /lista_fa /autocap /autoslot /silenzia
@@ -47,6 +47,7 @@ Crea la cartella `config/` con i seguenti file:
 {
   "admin_ids": [123456789],
   "channel_id": -1001234567890,
+  "main_channel_id": null,
   "mercato_aperto": true,
   "fase": "offseason",
   "admin_group_id": null,
@@ -64,6 +65,7 @@ Crea la cartella `config/` con i seguenti file:
       "id": "team01",
       "nome": "Nome Squadra",
       "gm_ids": [123456789],
+      "gm_nome": "Nome GM",
       "cap_disponibile": 35,
       "slot_disponibili": 3,
       "cap_penalizzato": 0
@@ -82,15 +84,22 @@ Crea la cartella `config/` con i seguenti file:
   "rilancio_minimo": 1,
   "cap_offseason": 165,
   "cap_regular": 150,
+  "slot_minimi_rs": 2,
+  "minimo_contrattuale": 1,
   "fascia_bassa_max": 20,
   "fascia_media_max": 34,
   "soglia_anni_2": 20,
   "soglia_anni_3": 35,
   "paginazione_aste": 8,
   "paginazione_fa": 8,
-  "notifica_minuti_scadenza": 15
+  "notifica_minuti_scadenza": 15,
+  "slot_massimo": 15,
+  "cap_massimo": 165
 }
 ```
+
+`offerta_massima` non è più una chiave di settings.json: dalla v20 viene calcolata come
+`cap_regular - (slot_minimi_rs - 1) * minimo_contrattuale`.
 
 **fa_players.csv**
 ```
@@ -104,7 +113,10 @@ Stephen Curry,38.1,0
 Crea `.env`:
 ```
 BOT_TOKEN=il_tuo_token
+HEALTHCHECK_URL=https://hc-ping.com/tuo-uuid
 ```
+
+`HEALTHCHECK_URL` è opzionale: se assente, il ping periodico viene semplicemente saltato.
 
 ### 3. Avvio
 
@@ -153,6 +165,7 @@ docker compose logs -f
 | `/set_fase <offseason\|regular>` | Cambia fase e scala cap |
 | `/apri_mercato` / `/chiudi_mercato` | Gestisce mercato FA |
 | `/listteams` | Lista squadre con ID e cap virtuale |
+| `/team <team_id>` | Situazione cap/slot dettagliata di una squadra (come `/me`, per admin) |
 | `/aste` | Lista aste con ID |
 | `/admin` | Lista comandi admin |
 | `/reboot` | Riavvia il bot (solo dev) |

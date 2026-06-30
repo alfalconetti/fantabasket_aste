@@ -198,38 +198,42 @@ async def firma_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── firma automatica (timeout vincitore) ─────────────────────────────────────
 
 async def firma_automatica(context: ContextTypes.DEFAULT_TYPE):
-    asta_id = context.job.data["asta_id"]
-    asta = db.get_asta(asta_id)
-    if not asta or asta["stato"] not in ("CHIUSA",):
-        return
+    try:
+        asta_id = context.job.data["asta_id"]
+        asta = db.get_asta(asta_id)
+        if not asta or asta["stato"] not in ("CHIUSA",):
+            return
 
-    if asta["tipo"] == "FA":
-        anni = 3
-        logger.info("Firma automatica FA (penale 3 anni): asta_id=%d", asta_id)
-        await _registra_firma_finale(context, asta_id, anni, asta["offerente_team_id"])
-    else:
-        anni = anni_minimi(asta["offerta_corrente"])
-        logger.info("Firma automatica RFA vincitore (anni minimi %d): asta_id=%d", anni, asta_id)
-        db.set_anni_offerti(asta_id, anni)
-        await _aggiorna_canale(context, asta_id)
+        if asta["tipo"] == "FA":
+            anni = 3
+            logger.info("Firma automatica FA (penale 3 anni): asta_id=%d", asta_id)
+            await _registra_firma_finale(context, asta_id, anni, asta["offerente_team_id"])
+        else:
+            anni = anni_minimi(asta["offerta_corrente"])
+            logger.info("Firma automatica RFA vincitore (anni minimi %d): asta_id=%d", anni, asta_id)
+            db.set_anni_offerti(asta_id, anni)
+            await _aggiorna_canale(context, asta_id)
 
-        team = tm.get_team_by_id(asta["offerente_team_id"])
-        if team:
-            for gm_id in team["gm_ids"]:
-                try:
-                    await context.bot.send_message(
-                        chat_id=gm_id,
-                        text=(
-                            f"⚠️ Non hai risposto in tempo. Anni assegnati automaticamente: <b>{anni}</b> "
-                            f"per <b>{asta['giocatore']}</b> a <b>{asta['offerta_corrente']}M</b>.\n\n"
-                            f"Il proprietario dei diritti ha ora 24 ore per decidere se pareggiare."
-                        ),
-                        parse_mode="HTML",
-                    )
-                except Exception as e:
-                    await _log_warn(context, f"Notifica auto vincitore RFA fallita GM {gm_id}: {e}")
+            team = tm.get_team_by_id(asta["offerente_team_id"])
+            if team:
+                for gm_id in team["gm_ids"]:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=gm_id,
+                            text=(
+                                f"⚠️ Non hai risposto in tempo. Anni assegnati automaticamente: <b>{anni}</b> "
+                                f"per <b>{asta['giocatore']}</b> a <b>{asta['offerta_corrente']}M</b>.\n\n"
+                                f"Il proprietario dei diritti ha ora 24 ore per decidere se pareggiare."
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except Exception as e:
+                        await _log_warn(context, f"Notifica auto vincitore RFA fallita GM {gm_id}: {e}")
 
         await _chiedi_pareggio(context, asta_id, anni)
+    except Exception as e:
+        from handlers.helpers import log_job_error
+        await log_job_error(context, "firma_automatica", e)
 
 
 # ── fase pareggio RFA ─────────────────────────────────────────────────────────
@@ -425,34 +429,38 @@ async def pareggio_anni_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def pareggio_automatico(context: ContextTypes.DEFAULT_TYPE):
-    asta_id = context.job.data["asta_id"]
-    asta    = db.get_asta(asta_id)
-    if not asta or asta["stato"] != "PAREGGIO":
-        return
-    logger.info("Pareggio automatico scaduto: asta_id=%d — passa al vincitore", asta_id)
+    try:
+        asta_id = context.job.data["asta_id"]
+        asta    = db.get_asta(asta_id)
+        if not asta or asta["stato"] != "PAREGGIO":
+            return
+        logger.info("Pareggio automatico scaduto: asta_id=%d — passa al vincitore", asta_id)
 
-    team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
-    team_vince = tm.get_team_by_id(asta["offerente_team_id"])
-    team_vince_nome = team_vince["nome"] if team_vince else "altra franchigia"
+        team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
+        team_vince = tm.get_team_by_id(asta["offerente_team_id"])
+        team_vince_nome = team_vince["nome"] if team_vince else "altra franchigia"
 
-    if team_prop:
-        for gm_id in team_prop["gm_ids"]:
-            try:
-                await context.bot.send_message(
-                    chat_id=gm_id,
-                    text=(
-                        f"⏰ Tempo scaduto per il pareggio.\n"
-                        f"<b>{asta['giocatore']}</b> passa a <b>{team_vince_nome}</b> "
-                        f"a {asta['offerta_corrente']}M × {asta['anni_offerti']} ann{'o' if asta['anni_offerti']==1 else 'i'}."
-                    ),
-                    parse_mode="HTML",
-                )
-            except Exception as e:
-                await _log_warn(context, f"Notifica pareggio auto fallita GM {gm_id}: {e}")
+        if team_prop:
+            for gm_id in team_prop["gm_ids"]:
+                try:
+                    await context.bot.send_message(
+                        chat_id=gm_id,
+                        text=(
+                            f"⏰ Tempo scaduto per il pareggio.\n"
+                            f"<b>{asta['giocatore']}</b> passa a <b>{team_vince_nome}</b> "
+                            f"a {asta['offerta_corrente']}M × {asta['anni_offerti']} ann{'o' if asta['anni_offerti']==1 else 'i'}."
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    await _log_warn(context, f"Notifica pareggio auto fallita GM {gm_id}: {e}")
 
-    await _registra_firma_finale(
-        context, asta_id, asta["anni_offerti"], asta["offerente_team_id"]
-    )
+        await _registra_firma_finale(
+            context, asta_id, asta["anni_offerti"], asta["offerente_team_id"]
+        )
+    except Exception as e:
+        from handlers.helpers import log_job_error
+        await log_job_error(context, "pareggio_automatico", e)
 
 
 # ── RFA senza offerte: proprietario può firmare ───────────────────────────────
@@ -652,8 +660,10 @@ async def _registra_firma_finale(
 
     team      = tm.get_team_by_id(team_id)
     team_nome = team["nome"] if team else team_id
+    gm_nome   = team.get("gm_nome", "") if team else ""
 
     channel_id = utils.get_channel_id()
+    firma_label = f"{gm_nome} firma" if gm_nome else "Firma"
     try:
         await context.bot.send_message(
             chat_id=channel_id,
@@ -666,6 +676,21 @@ async def _registra_firma_finale(
         )
     except Exception as e:
         await _log_warn(context, f"Annuncio firma canale fallito: {e}")
+
+    # Annuncio nel canale principale lega (solo firme)
+    main_channel_id = utils.load_globals().get("main_channel_id")
+    if main_channel_id:
+        try:
+            await context.bot.send_message(
+                chat_id=main_channel_id,
+                text=(
+                    f"🖊️ <b>{firma_label} {asta['giocatore']}</b> con <b>{team_nome}</b>\n"
+                    f"💰 {importo}M × {anni} ann{'o' if anni==1 else 'i'}"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            await _log_warn(context, f"Annuncio firma canale principale fallito: {e}")
 
     # notifica watcher della firma
     team_nome_w = team["nome"] if team else team_id

@@ -160,3 +160,29 @@ Prima versione funzionante. Struttura iniziale del progetto con bot.py, database
 - README.md aggiornato con struttura completa e credito a Claude
 - docs/guida_gm.md e docs/guida_admin.md creati
 - CHANGELOG.md aggiornato
+
+## v19 — Backup, healthcheck e main channel
+- Backup zip automatico (DB + config) 2x/giorno sul canale log, 1x/settimana sul gruppo admin
+- Healthchecks.io ping ogni 5 minuti (`HEALTHCHECK_URL` in `.env`)
+- `gm_nome` in teams.json — annuncio firma nel canale lega: "GM firma Giocatore con Squadra"
+- `main_channel_id` in globals.json — annunci firma separati nel canale principale lega
+- `aiohttp` nei requirements per il ping healthcheck
+
+## v20 — /team e formula offerta massima
+
+### Nuove funzionalità
+- `/team <team_id>` solo admin — mostra cap, slot, offerte vincenti e stima cap RS di qualsiasi squadra (identico a `/me` dal punto di vista delle informazioni, ma accessibile per tutti i team)
+- Formula `offerta_massima` derivata: `cap_regular - (slot_minimi_rs - 1) * minimo_contrattuale`
+  - Rimossa la chiave `"offerta_massima"` da settings.json (ora è un calcolo)
+  - Tre nuove chiavi in settings.json: `"cap_regular"`, `"slot_minimi_rs"`, `"minimo_contrattuale"`
+  - Il valore si aggiorna automaticamente se cambiano i parametri, senza restart
+
+### Roadmap (prossime versioni)
+- **Rich messages Bot API 10.1** — messaggi canale con formattazione avanzata (bold/italic nativo, link inline, anteprime giocatore) non appena python-telegram-bot aggiornerà il supporto
+- **Storico contratti per squadra** — comando `/contratti <team_id>` con lista firme della stagione corrente
+
+## v21 — Error handling sui job periodici
+- **Bug fix critico**: gli errori dentro i job di `JobQueue` (`check_scadenze`, `firma_automatica`, `pareggio_automatico`, `recupera_stati_pendenti`, `backup_giornaliero`, `backup_settimanale`) non passavano mai per `app.add_error_handler`, che copre solo gli update handler. Un'eccezione in uno di questi job restava visibile solo nei log del container, mai sul canale Telegram né al dev — causa probabile di notifiche di scadenza mancate senza alcun avviso visibile
+- Nuova funzione `log_job_error()` in `handlers/helpers.py`: cattura l'eccezione, logga il traceback completo, lo invia al canale log e in privato al dev
+- Tutti i job periodici ora sono avvolti in try/except che chiama `log_job_error`, senza alcuna modifica alla logica esistente all'interno
+- Un'eccezione su una singola asta dentro `check_scadenze` non resta più invisibile: viene notificata su Telegram. Il giro corrente del job si interrompe comunque al punto dell'errore (comportamento invariato), ma il giro successivo (60s dopo) riprende regolarmente da capo

@@ -37,7 +37,7 @@ flowchart TD
     REG --> NOTIF_W[🔔 Notifica watcher]
     REG --> NOTIF_PROP[⚠️ Notifica proprietario RFA]
 
-    subgraph SCHEDULER["⏱️ Scheduler ogni 60s"]
+    subgraph SCHEDULER["⏱️ Scheduler ogni 60s — try/except con log su canale + dev"]
         SCH{Asta scaduta?}
         SCH -->|sì, con vincitore| CHIUDI[CHIUSA\naggiorna canale]
         SCH -->|sì, senza vincitore FA| ANN_ASTA

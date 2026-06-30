@@ -225,10 +225,17 @@ async def nuova_fa_importo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     _ANNULLA_HINT = "\n<i>Per annullare: /annulla</i>"
     min_offerta = settings.rilancio_minimo()
+    max_offerta = settings.offerta_massima()
     testo = update.message.text.strip()
     if not testo.isdigit() or int(testo) < min_offerta:
         await update.message.reply_text(
             f"❌ Inserisci un numero intero >= {min_offerta}.\n\nQuanto offri?{_ANNULLA_HINT}",
+            parse_mode="HTML",
+        )
+        return NUOVA_FA_IMPORTO
+    if int(testo) > max_offerta:
+        await update.message.reply_text(
+            f"❌ Offerta troppo alta. Massimo consentito: {max_offerta}M.\n\nQuanto offri?{_ANNULLA_HINT}",
             parse_mode="HTML",
         )
         return NUOVA_FA_IMPORTO
@@ -369,6 +376,8 @@ async def _esegui_offerta(context, team, asta_id: int, importo: int, gm_id: int)
     min_offerta = asta["offerta_corrente"] + settings.rilancio_minimo()
     if importo < min_offerta:
         return f"Offerta troppo bassa. Minimo: {min_offerta}M."
+    if importo > settings.offerta_massima():
+        return f"Offerta troppo alta. Massimo consentito: {settings.offerta_massima()}M."
 
     cap_impegnato = db.get_cap_virtuale(team["id"])
     team_data = tm.get_team_by_id(team["id"])

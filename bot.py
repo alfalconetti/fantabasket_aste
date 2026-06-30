@@ -14,7 +14,7 @@ from handlers.admin   import get_handlers as admin_handlers
 from handlers.offerte import get_handlers as offerte_handlers
 from handlers.firma   import get_handlers as firma_handlers
 from handlers.user    import get_handlers as user_handlers
-from scheduler        import check_scadenze
+from scheduler        import check_scadenze, ping_healthcheck, backup_giornaliero, backup_settimanale
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -80,28 +80,31 @@ async def recupera_stati_pendenti(context: ContextTypes.DEFAULT_TYPE):
     e ripristina i flussi interrotti da un eventuale restart.
     """
     from handlers.firma import chiedi_anni, _chiedi_pareggio, _chiedi_firma_proprietario_senza_offerte
-    from handlers.helpers import aggiorna_canale
+    from handlers.helpers import aggiorna_canale, log_job_error
 
-    chiuse = db.get_aste_chiuse()
-    for asta in chiuse:
-        logger.info("Recupero asta CHIUSA id=%d giocatore=%s", asta["id"], asta["giocatore"])
-        if asta["offerente_team_id"]:
-            await chiedi_anni(context, asta["id"])
-        else:
-            await _chiedi_firma_proprietario_senza_offerte(context, asta["id"])
-        await aggiorna_canale(context, asta["id"])
-
-    in_pareggio = db.get_aste_in_pareggio()
-    for asta in in_pareggio:
-        if asta["anni_offerti"]:
-            logger.info("Recupero asta PAREGGIO id=%d giocatore=%s", asta["id"], asta["giocatore"])
-            await _chiedi_pareggio(context, asta["id"], asta["anni_offerti"])
+    try:
+        chiuse = db.get_aste_chiuse()
+        for asta in chiuse:
+            logger.info("Recupero asta CHIUSA id=%d giocatore=%s", asta["id"], asta["giocatore"])
+            if asta["offerente_team_id"]:
+                await chiedi_anni(context, asta["id"])
+            else:
+                await _chiedi_firma_proprietario_senza_offerte(context, asta["id"])
             await aggiorna_canale(context, asta["id"])
 
-    if chiuse or in_pareggio:
-        msg = f"🔄 Bot riavviato. Recuperate {len(chiuse)} aste CHIUSE e {len(in_pareggio)} in PAREGGIO."
-        logger.info(msg)
-        await _send_log(context.bot, msg)
+        in_pareggio = db.get_aste_in_pareggio()
+        for asta in in_pareggio:
+            if asta["anni_offerti"]:
+                logger.info("Recupero asta PAREGGIO id=%d giocatore=%s", asta["id"], asta["giocatore"])
+                await _chiedi_pareggio(context, asta["id"], asta["anni_offerti"])
+                await aggiorna_canale(context, asta["id"])
+
+        if chiuse or in_pareggio:
+            msg = f"🔄 Bot riavviato. Recuperate {len(chiuse)} aste CHIUSE e {len(in_pareggio)} in PAREGGIO."
+            logger.info(msg)
+            await _send_log(context.bot, msg)
+    except Exception as e:
+        await log_job_error(context, "recupera_stati_pendenti", e)
 
 
 async def cmd_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -133,6 +136,24 @@ def main():
     app.add_error_handler(error_handler)
     app.job_queue.run_repeating(check_scadenze, interval=60, first=10)
     app.job_queue.run_once(recupera_stati_pendenti, when=5)
+
+    # Healthcheck ogni 5 minuti
+    if os.environ.get("HEALTHCHECK_URL"):
+        app.job_queue.run_repeating(ping_healthcheck, interval=300, first=30)
+
+    # Backup giornaliero: mezzogiorno e mezzanotte (ora di Roma)
+    from datetime import time as dtime
+    from zoneinfo import ZoneInfo
+    rome = ZoneInfo("Europe/Rome")
+    app.job_queue.run_daily(backup_giornaliero, time=dtime(12, 0, tzinfo=rome))
+    app.job_queue.run_daily(backup_giornaliero, time=dtime(0, 0, tzinfo=rome))
+
+    # Backup settimanale: domenica mezzanotte
+    app.job_queue.run_daily(
+        backup_settimanale,
+        time=dtime(0, 30, tzinfo=rome),
+        days=(6,),  # domenica
+    )
 
     logger.info("Bot avviato.")
     app.run_polling(drop_pending_updates=True)
