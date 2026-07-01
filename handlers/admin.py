@@ -31,6 +31,14 @@ def is_admin(user_id: int) -> bool:
     return user_id in utils.get_admin_ids()
 
 
+def _admin_label(user) -> str:
+    """Costruisce 'Nome (@username)' o 'Nome' se l'username manca."""
+    nome = user.first_name or "Admin"
+    if user.username:
+        return f"{nome} (@{user.username})"
+    return nome
+
+
 def _set_mercato(aperto: bool):
     with open(GLOBALS_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -44,12 +52,12 @@ def _set_mercato(aperto: bool):
 async def nuova_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not is_admin(user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     args = context.args
     if len(args) < 3:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "Uso: /nuova_rfa <giocatore> <team_id> <vecchio_compenso>\n"
             "Esempio: /nuova_rfa Luka Doncic lakers 25"
         )
@@ -58,25 +66,25 @@ async def nuova_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         vecchio_compenso = int(args[-1])
     except ValueError:
-        await update.message.reply_text("❌ Il vecchio compenso deve essere un numero intero.")
+        await update.effective_message.reply_text("❌ Il vecchio compenso deve essere un numero intero.")
         return
 
     team_id   = args[-2]
     giocatore_input = " ".join(args[:-2])
 
     if not giocatore_input:
-        await update.message.reply_text("❌ Nome giocatore mancante.")
+        await update.effective_message.reply_text("❌ Nome giocatore mancante.")
         return
 
     team = tm.get_team_by_id(team_id)
     if team is None:
-        await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato. Usa /listteams.", parse_mode="HTML")
+        await update.effective_message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato. Usa /listteams.", parse_mode="HTML")
         return
 
     # max 1 RFA per team per stagione
     stagione = utils.get_stagione_corrente()
     if db.team_ha_rfa_stagione(team_id, stagione):
-        await update.message.reply_text(f"❌ {team['nome']} ha già utilizzato la RFA questa stagione.")
+        await update.effective_message.reply_text(f"❌ {team['nome']} ha già utilizzato la RFA questa stagione.")
         return
 
     # normalizzazione nome giocatore — per RFA non c'è lista fissa,
@@ -85,7 +93,7 @@ async def nuova_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     giocatore = giocatore_input.strip()
 
     if db.giocatore_gia_in_asta(giocatore):
-        await update.message.reply_text(f"❌ Esiste già un'asta aperta per {giocatore}.")
+        await update.effective_message.reply_text(f"❌ Esiste già un'asta aperta per {giocatore}.")
         return
 
     now   = datetime.now(timezone.utc)
@@ -101,10 +109,11 @@ async def nuova_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stagione=stagione,
     )
 
+    admin_label = _admin_label(update.effective_user)
     channel_id = utils.get_channel_id()
     teams_map  = {t["id"]: t["nome"] for t in tm.get_all_teams()}
     asta_row   = db.get_asta(asta_id)
-    testo      = utils.build_canale_message(asta_row, [], teams_map)
+    testo      = utils.build_canale_message(asta_row, [], teams_map, aperta_da=admin_label)
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("🏀 Offri",  url=f"https://t.me/{context.bot.username}?start=offri_{asta_id}"),
@@ -116,14 +125,14 @@ async def nuova_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     db.set_canale_msg_id(asta_id, msg.message_id)
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"✅ Asta RFA aperta per <b>{giocatore}</b>\n"
         f"Proprietario: {team['nome']} | Vecchio compenso: {vecchio_compenso}M\n"
         f"Scade: {utils.format_dt(scade.isoformat())}",
         parse_mode="HTML",
     )
-    logger.info("Nuova RFA: asta_id=%d giocatore=%s proprietario=%s compenso=%d",
-                asta_id, giocatore, team_id, vecchio_compenso)
+    logger.info("Nuova RFA: asta_id=%d giocatore=%s proprietario=%s compenso=%d admin=%d",
+                asta_id, giocatore, team_id, vecchio_compenso, update.effective_user.id)
 
 
 # ── /listteams ────────────────────────────────────────────────────────────────
@@ -142,42 +151,42 @@ async def listteams(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Slot: {t['slot_disponibili']} (liberi: {t['slot_disponibili']-slot_virt})"
         )
 
-    await update.message.reply_text("\n".join(righe), parse_mode="HTML")
+    await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
 
 
 # ── /set_cap e /set_slot ──────────────────────────────────────────────────────
 
 async def set_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     if len(context.args) != 2:
-        await update.message.reply_text("Uso: /set_cap <team_id> <valore>")
+        await update.effective_message.reply_text("Uso: /set_cap <team_id> <valore>")
         return
 
     team_id = context.args[0]
     try:
         valore = int(context.args[1])
     except ValueError:
-        await update.message.reply_text("❌ Il valore deve essere un numero intero.")
+        await update.effective_message.reply_text("❌ Il valore deve essere un numero intero.")
         return
 
     if valore < 0:
-        await update.message.reply_text("❌ Il cap non può essere negativo.")
+        await update.effective_message.reply_text("❌ Il cap non può essere negativo.")
         return
     if valore > settings.cap_massimo():
-        await update.message.reply_text(f"❌ Il cap non può superare {settings.cap_massimo()}M.")
+        await update.effective_message.reply_text(f"❌ Il cap non può superare {settings.cap_massimo()}M.")
         return
 
     team = tm.get_team_by_id(team_id)
     if team is None:
-        await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
+        await update.effective_message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
         return
 
     vecchio = team["cap_disponibile"]
     tm.set_cap(team_id, valore)
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"✅ Cap di <b>{team['nome']}</b> impostato a <b>{valore}M</b>.", parse_mode="HTML"
     )
     await _notifica_gm_cap_slot(context, team,
@@ -189,35 +198,35 @@ async def set_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     if len(context.args) != 2:
-        await update.message.reply_text("Uso: /set_slot <team_id> <valore>")
+        await update.effective_message.reply_text("Uso: /set_slot <team_id> <valore>")
         return
 
     team_id = context.args[0]
     try:
         valore = int(context.args[1])
     except ValueError:
-        await update.message.reply_text("❌ Il valore deve essere un numero intero.")
+        await update.effective_message.reply_text("❌ Il valore deve essere un numero intero.")
         return
 
     if valore < 0:
-        await update.message.reply_text("❌ Gli slot non possono essere negativi.")
+        await update.effective_message.reply_text("❌ Gli slot non possono essere negativi.")
         return
     if valore > settings.slot_massimo():
-        await update.message.reply_text(f"❌ Gli slot non possono superare {settings.slot_massimo()}.")
+        await update.effective_message.reply_text(f"❌ Gli slot non possono superare {settings.slot_massimo()}.")
         return
 
     team = tm.get_team_by_id(team_id)
     if team is None:
-        await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
+        await update.effective_message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
         return
 
     vecchio = team["slot_disponibili"]
     tm.set_slot(team_id, valore)
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"✅ Slot di <b>{team['nome']}</b> impostati a <b>{valore}</b>.", parse_mode="HTML"
     )
     await _notifica_gm_cap_slot(context, team,
@@ -230,18 +239,24 @@ async def set_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def apri_mercato(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
+    admin_label = _admin_label(update.effective_user)
     _set_mercato(True)
-    await update.message.reply_text("✅ Mercato FA aperto.")
+    await update.effective_message.reply_text("✅ Mercato FA aperto.")
+    from handlers.helpers import log_warn as _lw
+    await _lw(context, f"🟢 Mercato FA aperto da <b>{admin_label}</b>.")
 
 
 async def chiudi_mercato(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
+    admin_label = _admin_label(update.effective_user)
     _set_mercato(False)
-    await update.message.reply_text("🔒 Mercato FA chiuso.")
+    await update.effective_message.reply_text("🔒 Mercato FA chiuso.")
+    from handlers.helpers import log_warn as _lw
+    await _lw(context, f"🔒 Mercato FA chiuso da <b>{admin_label}</b>.")
 
 
 # ── /aste ────────────────────────────────────────────────────────────────────
@@ -249,7 +264,7 @@ async def chiudi_mercato(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def aste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     aste_aperte = db.get_aste_aperte()
     if not aste_aperte:
-        await update.message.reply_text("Nessuna asta aperta al momento.")
+        await update.effective_message.reply_text("Nessuna asta aperta al momento.")
         return
 
     teams_map = {t["id"]: t["nome"] for t in tm.get_all_teams()}
@@ -264,36 +279,36 @@ async def aste(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"  Scade: {utils.format_dt(a['scade_at'])}\n"
             f"  ID: <code>{a['id']}</code>"
         )
-    await update.message.reply_text("\n\n".join(righe), parse_mode="HTML")
+    await update.effective_message.reply_text("\n\n".join(righe), parse_mode="HTML")
 
 
 # ── /chiudi_asta e /annulla_asta ─────────────────────────────────────────────
 
 async def chiudi_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     if not context.args:
-        await update.message.reply_text("Uso: /chiudi_asta <asta_id>")
+        await update.effective_message.reply_text("Uso: /chiudi_asta <asta_id>")
         return
 
     try:
         asta_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("❌ ID non valido.")
+        await update.effective_message.reply_text("❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso.")
         return
 
     asta = db.get_asta(asta_id)
     if not asta or asta["stato"] != "APERTA":
-        await update.message.reply_text("❌ Asta non trovata o non aperta.")
+        await update.effective_message.reply_text("❌ Asta non trovata o non aperta.")
         return
 
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Conferma chiusura", callback_data=f"admin_chiudi:{asta_id}"),
         InlineKeyboardButton("❌ Annulla",           callback_data="admin_noop"),
     ]])
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"Chiudere forzatamente l'asta per <b>{asta['giocatore']}</b>?\n"
         f"Offerta attuale: {asta['offerta_corrente']}M\n"
         f"Il vincitore verrà contattato per la firma.",
@@ -304,29 +319,29 @@ async def chiudi_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def annulla_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     if not context.args:
-        await update.message.reply_text("Uso: /annulla_asta <asta_id>")
+        await update.effective_message.reply_text("Uso: /annulla_asta <asta_id>")
         return
 
     try:
         asta_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("❌ ID non valido.")
+        await update.effective_message.reply_text("❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso.")
         return
 
     asta = db.get_asta(asta_id)
     if not asta or asta["stato"] not in ("APERTA", "CHIUSA", "PAREGGIO"):
-        await update.message.reply_text("❌ Asta non trovata o già conclusa.")
+        await update.effective_message.reply_text("❌ Asta non trovata o già conclusa.")
         return
 
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Conferma annullamento", callback_data=f"admin_annulla:{asta_id}"),
         InlineKeyboardButton("❌ Annulla",               callback_data="admin_noop"),
     ]])
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"Annullare l'asta per <b>{asta['giocatore']}</b>? Nessun vincitore verrà assegnato.",
         parse_mode="HTML",
         reply_markup=kb,
@@ -346,14 +361,78 @@ async def admin_chiudi_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("❌ Asta non più disponibile.")
         return
 
+    admin_label = _admin_label(query.from_user)
+
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     db.chiudi_asta(asta_id, now.isoformat())
 
     await _aggiorna_canale(context, asta_id)
 
+    # annuncio nel canale
+    channel_id = utils.get_channel_id()
+    try:
+        await context.bot.send_message(
+            chat_id=channel_id,
+            text=f"⏰ Asta <b>{asta['giocatore']}</b> chiusa anticipatamente da <b>{admin_label}</b>.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await _log_warn(context, f"Annuncio chiusura anticipata canale fallito: {e}")
+
+    # notifica watcher
+    watchers = db.get_watchers(asta_id)
+    gm_ids_vincitore = set()
+    if asta["offerente_team_id"]:
+        team_v = tm.get_team_by_id(asta["offerente_team_id"])
+        if team_v:
+            gm_ids_vincitore.update(team_v["gm_ids"])
+    for gm_id in watchers:
+        if gm_id not in gm_ids_vincitore:
+            try:
+                await context.bot.send_message(
+                    chat_id=gm_id,
+                    text=f"⏰ L'asta per <b>{asta['giocatore']}</b> è stata chiusa anticipatamente da <b>{admin_label}</b>.",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                await _log_warn(context, f"Notifica chiusura anticipata watcher {gm_id}: {e}")
+
+    # notifica proprietario RFA (solo se è un'asta RFA e c'è un vincitore)
+    if asta["tipo"] == "RFA" and asta["squadra_proprietaria"] and asta["offerente_team_id"]:
+        team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
+        if team_prop:
+            for gm_id in team_prop["gm_ids"]:
+                try:
+                    await context.bot.send_message(
+                        chat_id=gm_id,
+                        text=(
+                            f"⏰ L'asta RFA per <b>{asta['giocatore']}</b> è stata chiusa anticipatamente "
+                            f"da <b>{admin_label}</b>. Riceverai a breve la richiesta di pareggio."
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    await _log_warn(context, f"Notifica chiusura anticipata proprietario RFA {gm_id}: {e}")
+
     if asta["offerente_team_id"]:
         from handlers.firma import chiedi_anni
+        # notifica preventiva al GM vincitore che la chiusura è stata anticipata da un admin
+        team_v = tm.get_team_by_id(asta["offerente_team_id"])
+        if team_v:
+            for gm_id in team_v["gm_ids"]:
+                try:
+                    await context.bot.send_message(
+                        chat_id=gm_id,
+                        text=(
+                            f"⏰ L'asta per <b>{asta['giocatore']}</b> è stata chiusa anticipatamente "
+                            f"da <b>{admin_label}</b>. Sei il vincitore con {asta['offerta_corrente']}M — "
+                            f"riceverai a breve la richiesta di firma."
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    await _log_warn(context, f"Notifica chiusura anticipata GM vincitore {gm_id}: {e}")
         await chiedi_anni(context, asta_id)
         await query.edit_message_text(
             f"✅ Asta <b>{asta['giocatore']}</b> chiusa. Il vincitore è stato contattato.",
@@ -392,6 +471,8 @@ async def admin_annulla_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text("❌ Asta non trovata.")
         return
 
+    admin_label = _admin_label(query.from_user)
+
     # cancella eventuali job pendenti
     for nome in [f"firma_auto_{asta_id}", f"pareggio_auto_{asta_id}", f"notif15_{asta_id}"]:
         for j in context.job_queue.get_jobs_by_name(nome):
@@ -410,7 +491,7 @@ async def admin_annulla_callback(update: Update, context: ContextTypes.DEFAULT_T
                     await context.bot.send_message(
                         chat_id=gm_id,
                         text=(
-                            f"⚠️ L'asta per <b>{asta['giocatore']}</b> è stata annullata da un admin.\n"
+                            f"⚠️ L'asta per <b>{asta['giocatore']}</b> è stata annullata da <b>{admin_label}</b>.\n"
                             f"La tua offerta di {asta['offerta_corrente']}M è stata annullata."
                         ),
                         parse_mode="HTML",
@@ -426,7 +507,7 @@ async def admin_annulla_callback(update: Update, context: ContextTypes.DEFAULT_T
                 try:
                     await context.bot.send_message(
                         chat_id=gm_id,
-                        text=f"⚠️ L'asta RFA per <b>{asta['giocatore']}</b> è stata annullata da un admin.",
+                        text=f"⚠️ L'asta RFA per <b>{asta['giocatore']}</b> è stata annullata da <b>{admin_label}</b>.",
                         parse_mode="HTML",
                     )
                 except Exception as e:
@@ -449,7 +530,7 @@ async def admin_annulla_callback(update: Update, context: ContextTypes.DEFAULT_T
             try:
                 await context.bot.send_message(
                     chat_id=gm_id,
-                    text=f"❌ L'asta per <b>{asta['giocatore']}</b> è stata annullata da un admin.",
+                    text=f"❌ L'asta per <b>{asta['giocatore']}</b> è stata annullata da <b>{admin_label}</b>.",
                     parse_mode="HTML",
                 )
             except Exception as e:
@@ -460,7 +541,7 @@ async def admin_annulla_callback(update: Update, context: ContextTypes.DEFAULT_T
     try:
         await context.bot.send_message(
             chat_id=channel_id,
-            text=f"❌ Asta annullata: <b>{asta['giocatore']}</b>",
+            text=f"❌ Asta annullata: <b>{asta['giocatore']}</b> (da {admin_label})",
             parse_mode="HTML",
         )
     except Exception as e:
@@ -482,11 +563,11 @@ async def admin_noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def set_fase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     if not context.args or context.args[0] not in ("offseason", "regular"):
-        await update.message.reply_text("Uso: /set_fase <offseason|regular>")
+        await update.effective_message.reply_text("Uso: /set_fase <offseason|regular>")
         return
 
     fase = context.args[0]
@@ -497,7 +578,7 @@ async def set_fase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     fase_corrente = globals_data.get("fase", "offseason")
     if fase_corrente == fase:
-        await update.message.reply_text(f"Siamo già in fase <b>{fase}</b>.", parse_mode="HTML")
+        await update.effective_message.reply_text(f"Siamo già in fase <b>{fase}</b>.", parse_mode="HTML")
         return
 
     all_teams = tm.get_all_teams()
@@ -519,7 +600,7 @@ async def set_fase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open(GLOBALS_PATH, "w", encoding="utf-8") as f:
         json.dump(globals_data, f, ensure_ascii=False, indent=2)
 
-    await update.message.reply_text("\n".join(righe), parse_mode="HTML")
+    await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
     logger.info("set_fase: %s → %s admin=%d", fase_corrente, fase, update.effective_user.id)
 
 
@@ -528,12 +609,12 @@ async def set_fase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reset_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Chiede la nuova stagione e conferma prima di resettare."""
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     if not context.args:
         stagione_corrente = utils.get_stagione_corrente()
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             f"Uso: /reset_rfa <nuova_stagione>\n"
             f"Esempio: /reset_rfa 2025-26\n\n"
             f"Stagione corrente: <b>{stagione_corrente}</b>",
@@ -549,7 +630,7 @@ async def reset_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("✅ Conferma", callback_data="reset_rfa:conferma"),
         InlineKeyboardButton("❌ Annulla",  callback_data="admin_noop"),
     ]])
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"Cambio stagione: <b>{stagione_corrente} → {nuova_stagione}</b>\n"
         f"Tutti i team potranno aprire una nuova RFA.\n\nConfermi?",
         parse_mode="HTML",
@@ -591,27 +672,27 @@ async def reset_rfa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def set_cap_penalizzato(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     if len(context.args) != 2:
-        await update.message.reply_text("Uso: /set_cap_penalizzato <team_id> <valore>")
+        await update.effective_message.reply_text("Uso: /set_cap_penalizzato <team_id> <valore>")
         return
 
     team_id = context.args[0]
     try:
         valore = int(context.args[1])
     except ValueError:
-        await update.message.reply_text("❌ Il valore deve essere un numero intero.")
+        await update.effective_message.reply_text("❌ Il valore deve essere un numero intero.")
         return
 
     if valore < 0:
-        await update.message.reply_text("❌ Il valore non può essere negativo.")
+        await update.effective_message.reply_text("❌ Il valore non può essere negativo.")
         return
 
     team = tm.get_team_by_id(team_id)
     if team is None:
-        await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
+        await update.effective_message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
         return
 
     with open(GLOBALS_PATH.replace("globals.json", "teams.json"), "r", encoding="utf-8") as f:
@@ -626,7 +707,7 @@ async def set_cap_penalizzato(update: Update, context: ContextTypes.DEFAULT_TYPE
         import json as _json2
         _json2.dump(data, f, ensure_ascii=False, indent=2)
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"✅ Cap penalizzato di <b>{team['nome']}</b> impostato a <b>{valore}M</b>.", parse_mode="HTML"
     )
     logger.info("set_cap_penalizzato: team=%s valore=%d", team_id, valore)
@@ -677,36 +758,36 @@ async def _notifica_gm_cap_slot(context, team: dict, testo: str, admin_name: str
 async def add_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Aggiunge (o sottrae se negativo) cap a una squadra. Più comodo di set_cap per aggiustamenti."""
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     if len(context.args) != 2:
-        await update.message.reply_text("Uso: /add_cap <team_id> <importo>\nEsempio: /add_cap bulls 15 oppure /add_cap bulls -10")
+        await update.effective_message.reply_text("Uso: /add_cap <team_id> <importo>\nEsempio: /add_cap bulls 15 oppure /add_cap bulls -10")
         return
 
     team_id = context.args[0]
     try:
         delta = int(context.args[1])
     except ValueError:
-        await update.message.reply_text("❌ L'importo deve essere un numero intero (anche negativo).")
+        await update.effective_message.reply_text("❌ L'importo deve essere un numero intero (anche negativo).")
         return
 
     team = tm.get_team_by_id(team_id)
     if team is None:
-        await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
+        await update.effective_message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
         return
 
     nuovo_cap = team["cap_disponibile"] + delta
     if nuovo_cap < 0:
-        await update.message.reply_text(f"❌ Il cap non può diventare negativo ({team['cap_disponibile']}M + {delta}M = {nuovo_cap}M).")
+        await update.effective_message.reply_text(f"❌ Il cap non può diventare negativo ({team['cap_disponibile']}M + {delta}M = {nuovo_cap}M).")
         return
     if nuovo_cap > settings.cap_massimo():
-        await update.message.reply_text(f"❌ Il cap non può superare {settings.cap_massimo()}M ({team['cap_disponibile']}M + {delta}M = {nuovo_cap}M).")
+        await update.effective_message.reply_text(f"❌ Il cap non può superare {settings.cap_massimo()}M ({team['cap_disponibile']}M + {delta}M = {nuovo_cap}M).")
         return
 
     tm.set_cap(team_id, nuovo_cap)
     segno = "+" if delta >= 0 else ""
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"✅ Cap di <b>{team['nome']}</b>: {team['cap_disponibile']}M {segno}{delta}M → <b>{nuovo_cap}M</b>",
         parse_mode="HTML",
     )
@@ -721,31 +802,31 @@ async def add_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
     if len(context.args) != 2:
-        await update.message.reply_text("Uso: /add_slot <team_id> <importo>\nEsempio: /add_slot bulls 1 oppure /add_slot bulls -1")
+        await update.effective_message.reply_text("Uso: /add_slot <team_id> <importo>\nEsempio: /add_slot bulls 1 oppure /add_slot bulls -1")
         return
     team_id = context.args[0]
     try:
         delta = int(context.args[1])
     except ValueError:
-        await update.message.reply_text("❌ L'importo deve essere un numero intero.")
+        await update.effective_message.reply_text("❌ L'importo deve essere un numero intero.")
         return
     team = tm.get_team_by_id(team_id)
     if team is None:
-        await update.message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
+        await update.effective_message.reply_text(f"❌ Team ID '<code>{team_id}</code>' non trovato.", parse_mode="HTML")
         return
     nuovo = team["slot_disponibili"] + delta
     if nuovo < 0:
-        await update.message.reply_text(f"❌ Gli slot non possono diventare negativi ({team['slot_disponibili']} + {delta} = {nuovo}).")
+        await update.effective_message.reply_text(f"❌ Gli slot non possono diventare negativi ({team['slot_disponibili']} + {delta} = {nuovo}).")
         return
     if nuovo > settings.slot_massimo():
-        await update.message.reply_text(f"❌ Gli slot non possono superare {settings.slot_massimo()} ({team['slot_disponibili']} + {delta} = {nuovo}).")
+        await update.effective_message.reply_text(f"❌ Gli slot non possono superare {settings.slot_massimo()} ({team['slot_disponibili']} + {delta} = {nuovo}).")
         return
     tm.set_slot(team_id, nuovo)
     segno = "+" if delta >= 0 else ""
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"✅ Slot di <b>{team['nome']}</b>: {team['slot_disponibili']} {segno}{delta} → <b>{nuovo}</b>", parse_mode="HTML"
     )
     await _notifica_gm_cap_slot(context, team,
@@ -758,26 +839,27 @@ async def add_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def annulla_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
     if not context.args:
-        await update.message.reply_text("Uso: /annulla_offerta <asta_id>")
+        await update.effective_message.reply_text("Uso: /annulla_offerta <asta_id>")
         return
     try:
         asta_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("❌ ID non valido.")
+        await update.effective_message.reply_text("❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso.")
         return
     asta = db.get_asta(asta_id)
     if not asta or asta["stato"] != "APERTA":
-        await update.message.reply_text("❌ Asta non trovata o non aperta.")
+        await update.effective_message.reply_text("❌ Asta non trovata o non aperta.")
         return
 
     result = db.annulla_ultima_offerta(asta_id)
     if result is None:
-        await update.message.reply_text("❌ Nessuna offerta da annullare.")
+        await update.effective_message.reply_text("❌ Nessuna offerta da annullare.")
         return
 
+    admin_label = _admin_label(update.effective_user)
     teams_map = {t["id"]: t["nome"] for t in tm.get_all_teams()}
     team_el = teams_map.get(result["team_eliminato"], result["team_eliminato"])
     nuovo_team = teams_map.get(result["nuovo_team"], "nessuno") if result["nuovo_team"] else "nessuno"
@@ -789,7 +871,7 @@ async def annulla_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=channel_id,
             text=(
-                f"⚠️ <b>Offerta annullata da admin</b>\n"
+                f"⚠️ <b>Offerta annullata da {admin_label}</b>\n"
                 f"🏀 {asta['giocatore']}\n"
                 f"Offerta eliminata: {result['offerta_eliminata']}M — {team_el}\n"
                 f"Offerta attuale: {result['nuovo_importo']}M — {nuovo_team}"
@@ -822,7 +904,7 @@ async def annulla_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=gm_id,
                     text=(
                         f"⚠️ La tua offerta di <b>{result['offerta_eliminata']}M</b> "
-                        f"per <b>{asta['giocatore']}</b> è stata annullata da un admin.\n"
+                        f"per <b>{asta['giocatore']}</b> è stata annullata da <b>{admin_label}</b>.\n"
                         f"Offerta attuale: <b>{result['nuovo_importo']}M — {nuovo_team}</b>"
                     ),
                     parse_mode="HTML",
@@ -839,7 +921,7 @@ async def annulla_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=gm_id,
                     text=(
-                        f"⚠️ Offerta annullata da admin su <b>{asta['giocatore']}</b>\n"
+                        f"⚠️ Offerta annullata da <b>{admin_label}</b> su <b>{asta['giocatore']}</b>\n"
                         f"Offerta eliminata: {result['offerta_eliminata']}M — {team_el}\n"
                         f"Offerta attuale: <b>{result['nuovo_importo']}M — {nuovo_team}</b>"
                     ),
@@ -848,7 +930,7 @@ async def annulla_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await _log_warn(context, f"Notifica annulla_offerta watcher {gm_id}: {e}")
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"✅ Ultima offerta di <b>{team_el}</b> ({result['offerta_eliminata']}M) annullata.\n"
         f"Offerta attuale: <b>{result['nuovo_importo']}M — {nuovo_team}</b>{warning_cap}",
         parse_mode="HTML",
@@ -867,11 +949,11 @@ async def autocap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     team = tm.get_team_by_gm(user.id)
     if team is None:
-        await update.message.reply_text("⛔ Non sei registrato come GM.")
+        await update.effective_message.reply_text("⛔ Non sei registrato come GM.")
         return
 
     if not context.args or len(context.args) != 1:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "Uso: /autocap &lt;importo&gt;\nEsempio: /autocap 15\n\n"
             "<i>⚠️ Usare solo in caso di necessità (es. trade appena avvenuta). "
             "La richiesta viene segnalata agli admin per verifica. "
@@ -883,11 +965,11 @@ async def autocap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         importo = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("❌ L'importo deve essere un numero intero.")
+        await update.effective_message.reply_text("❌ L'importo deve essere un numero intero.")
         return
 
     if importo <= 0:
-        await update.message.reply_text("❌ L'importo deve essere positivo.")
+        await update.effective_message.reply_text("❌ L'importo deve essere positivo.")
         return
 
     vecchio_cap = team["cap_disponibile"]
@@ -898,7 +980,7 @@ async def autocap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from datetime import datetime, timezone
     ora = _utils.format_dt(datetime.now(timezone.utc).isoformat())
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"✅ Cap aggiunto: <b>+{importo}M</b>\nIl tuo cap ora è <b>{nuovo_cap}M</b>.\n\n"
         f"<i>La richiesta è stata segnalata agli admin.</i>",
         parse_mode="HTML",
@@ -938,10 +1020,10 @@ async def auto_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     team = tm.get_team_by_gm(user.id)
     if team is None:
-        await update.message.reply_text("⛔ Non sei registrato come GM.")
+        await update.effective_message.reply_text("⛔ Non sei registrato come GM.")
         return
     if not context.args or len(context.args) != 1:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "Uso: /autoslot &lt;importo&gt;\nEsempio: /autoslot 1\n\n"
             "<i>⚠️ Usare solo in caso di necessità. La richiesta viene segnalata agli admin per verifica.</i>",
             parse_mode="HTML",
@@ -950,10 +1032,10 @@ async def auto_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         importo = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("❌ L'importo deve essere un numero intero.")
+        await update.effective_message.reply_text("❌ L'importo deve essere un numero intero.")
         return
     if importo <= 0:
-        await update.message.reply_text("❌ L'importo deve essere positivo.")
+        await update.effective_message.reply_text("❌ L'importo deve essere positivo.")
         return
 
     vecchio = team["slot_disponibili"]
@@ -964,7 +1046,7 @@ async def auto_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from datetime import datetime, timezone
     ora = _utils.format_dt(datetime.now(timezone.utc).isoformat())
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"✅ Slot aggiunti: <b>+{importo}</b>\nI tuoi slot ora sono <b>{nuovo}</b>.\n\n"
         f"<i>La richiesta è stata segnalata agli admin.</i>",
         parse_mode="HTML",
@@ -1001,11 +1083,11 @@ async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Solo admin. Uso: /team <team_id>
     """
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     if not context.args:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "Uso: /team &lt;team_id&gt;\n"
             "Esempio: /team bulls\n\n"
             "Usa /listteams per vedere tutti gli ID squadra.",
@@ -1016,7 +1098,7 @@ async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
     team_id = context.args[0]
     team = tm.get_team_by_id(team_id)
     if team is None:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             f"❌ Team ID '<code>{team_id}</code>' non trovato. Usa /listteams per la lista completa.",
             parse_mode="HTML",
         )
@@ -1070,58 +1152,611 @@ async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"(scade {utils.format_dt(o['scade_at'])})"
             )
 
-    await update.message.reply_text("\n".join(righe), parse_mode="HTML")
+    await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
+
+
+# ── /estendi_asta ─────────────────────────────────────────────────────────────
+
+async def estendi_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Sposta la scadenza di un'asta in avanti di N ore.
+    Solo admin. Uso: /estendi_asta <asta_id> <ore>
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if len(context.args) < 2:
+        await update.effective_message.reply_text(
+            "Uso: /estendi_asta &lt;asta_id&gt; &lt;ore&gt;\nEsempio: /estendi_asta 42 6",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        asta_id = int(context.args[0])
+        ore     = int(context.args[1])
+        if ore <= 0:
+            raise ValueError
+    except ValueError:
+        await update.effective_message.reply_text("❌ Parametri non validi. Le ore devono essere un intero positivo.")
+        return
+
+    asta = db.get_asta(asta_id)
+    if not asta:
+        await update.effective_message.reply_text("❌ Asta non trovata.")
+        return
+    if asta["stato"] not in ("APERTA", "CHIUSA", "PAREGGIO"):
+        await update.effective_message.reply_text(
+            f"❌ L'asta <b>{asta['giocatore']}</b> è in stato <b>{asta['stato']}</b>: "
+            f"non è possibile estenderla.",
+            parse_mode="HTML",
+        )
+        return
+
+    vecchio = datetime.fromisoformat(asta["scade_at"])
+    nuovo   = vecchio + timedelta(hours=ore)
+    db.set_scade_at(asta_id, nuovo.isoformat())
+    admin_label = _admin_label(update.effective_user)
+
+    from handlers.helpers import aggiorna_canale, log_warn as _lw
+    await aggiorna_canale(context, asta_id)
+    await _lw(context, f"⏰ Asta <b>{asta['giocatore']}</b> estesa di {ore}h da <b>{admin_label}</b>. Nuova scadenza: {utils.format_dt(nuovo.isoformat())}")
+
+    channel_id = utils.get_channel_id()
+    try:
+        await context.bot.send_message(
+            chat_id=channel_id,
+            text=(
+                f"⏰ Scadenza asta <b>{asta['giocatore']}</b> estesa di {ore}h da <b>{admin_label}</b>.\n"
+                f"Nuova scadenza: <b>{utils.format_dt(nuovo.isoformat())}</b>"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await _lw(context, f"Annuncio estensione canale fallito: {e}")
+
+    await update.effective_message.reply_text(
+        f"✅ Asta <b>{asta['giocatore']}</b> estesa di {ore}h.\n"
+        f"Nuova scadenza: <b>{utils.format_dt(nuovo.isoformat())}</b>",
+        parse_mode="HTML",
+    )
+    logger.info("estendi_asta: asta_id=%d +%dh nuova_scadenza=%s admin=%d",
+                asta_id, ore, nuovo.isoformat(), update.effective_user.id)
+
+
+# ── /sposta_asta ──────────────────────────────────────────────────────────────
+
+async def sposta_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Imposta una scadenza precisa per un'asta.
+    Solo admin. Uso: /sposta_asta <asta_id> <YYYY-MM-DDTHH:MM>
+    La data/ora si intende in ora di Roma (Europe/Rome).
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if len(context.args) < 2:
+        await update.effective_message.reply_text(
+            "Uso: /sposta_asta &lt;asta_id&gt; &lt;YYYY-MM-DDTHH:MM&gt;\n"
+            "Esempio: /sposta_asta 42 2026-07-15T20:00\n"
+            "L'orario si intende in ora di Roma.",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        asta_id = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso.")
+        return
+
+    try:
+        from zoneinfo import ZoneInfo
+        rome = ZoneInfo("Europe/Rome")
+        nuovo_naive = datetime.fromisoformat(context.args[1])
+        nuovo = nuovo_naive.replace(tzinfo=rome).astimezone(timezone.utc)
+    except Exception:
+        await update.effective_message.reply_text(
+            "❌ Formato data non valido. Usa: <code>YYYY-MM-DDTHH:MM</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    if nuovo <= datetime.now(timezone.utc):
+        await update.effective_message.reply_text("❌ La nuova scadenza deve essere nel futuro.")
+        return
+
+    asta = db.get_asta(asta_id)
+    if not asta:
+        await update.effective_message.reply_text("❌ Asta non trovata.")
+        return
+    if asta["stato"] not in ("APERTA", "CHIUSA", "PAREGGIO"):
+        await update.effective_message.reply_text(
+            f"❌ L'asta <b>{asta['giocatore']}</b> è in stato <b>{asta['stato']}</b>: "
+            f"non è possibile spostarla.",
+            parse_mode="HTML",
+        )
+        return
+
+    db.set_scade_at(asta_id, nuovo.isoformat())
+    admin_label = _admin_label(update.effective_user)
+
+    from handlers.helpers import aggiorna_canale, log_warn as _lw
+    await aggiorna_canale(context, asta_id)
+    await _lw(context, f"⏰ Asta <b>{asta['giocatore']}</b> spostata a {utils.format_dt(nuovo.isoformat())} da <b>{admin_label}</b>.")
+
+    channel_id = utils.get_channel_id()
+    try:
+        await context.bot.send_message(
+            chat_id=channel_id,
+            text=(
+                f"⏰ Scadenza asta <b>{asta['giocatore']}</b> spostata da <b>{admin_label}</b>.\n"
+                f"Nuova scadenza: <b>{utils.format_dt(nuovo.isoformat())}</b>"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await _lw(context, f"Annuncio spostamento canale fallito: {e}")
+
+    await update.effective_message.reply_text(
+        f"✅ Scadenza asta <b>{asta['giocatore']}</b> spostata a "
+        f"<b>{utils.format_dt(nuovo.isoformat())}</b>",
+        parse_mode="HTML",
+    )
+    logger.info("sposta_asta: asta_id=%d nuova_scadenza=%s admin=%d",
+                asta_id, nuovo.isoformat(), update.effective_user.id)
+
+
+# ── /stato_asta ───────────────────────────────────────────────────────────────
+
+async def stato_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Dump completo di tutti i campi DB di un'asta. Utile per debug rapido
+    senza dover aprire sqlite3.
+    Solo admin. Uso: /stato_asta <asta_id>
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /stato_asta &lt;asta_id&gt;", parse_mode="HTML")
+        return
+
+    try:
+        asta_id = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso.")
+        return
+
+    asta = db.get_asta(asta_id)
+    if not asta:
+        await update.effective_message.reply_text("❌ Asta non trovata.")
+        return
+
+    righe = [f"🔍 <b>Dump asta #{asta_id}</b>", ""]
+    for k, v in dict(asta).items():
+        righe.append(f"<code>{k}</code>: {v}")
+
+    offerte = db.get_offerte(asta_id)
+    righe.append("")
+    righe.append(f"<b>Offerte ({len(offerte)}):</b>")
+    for o in offerte:
+        righe.append(f"  {o['team_id']} — {o['importo']}M ({o['timestamp']})")
+
+    await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
+
+
+# ── /job_status ───────────────────────────────────────────────────────────────
+
+async def job_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Mostra i job attivi nella JobQueue con nome e prossima esecuzione prevista.
+    Utile per verificare che firma_automatica e pareggio_automatico siano ancora
+    schedulati dopo un recovery o un comportamento anomalo.
+    Solo admin.
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    jobs = context.application.job_queue.jobs()
+    if not jobs:
+        await update.effective_message.reply_text("Nessun job attivo in questo momento.")
+        return
+
+    now = datetime.now(timezone.utc)
+    righe = [f"⚙️ <b>Job attivi: {len(jobs)}</b>", ""]
+    for job in sorted(jobs, key=lambda j: j.next_t or now):
+        next_t = job.next_t
+        if next_t:
+            diff = next_t - now
+            minuti = int(diff.total_seconds() // 60)
+            secondi = int(diff.total_seconds() % 60)
+            prossima = f"tra {minuti}m {secondi}s ({utils.format_dt(next_t.isoformat())})"
+        else:
+            prossima = "—"
+        nome = job.name or "senza nome"
+        righe.append(f"• <code>{nome}</code>\n  ↳ {prossima}")
+
+    await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
+
+
+# ── /all_aste ─────────────────────────────────────────────────────────────────
+
+async def all_aste(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Lista tutte le aste con filtro opzionale per stato.
+    Solo admin. Uso: /all_aste [stato]
+    Stati validi: aperta, chiusa, pareggio, conclusa, annullata
+    Senza argomenti mostra le ultime 30 aste di qualsiasi stato.
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    stati_validi = ("APERTA", "CHIUSA", "PAREGGIO", "CONCLUSA", "ANNULLATA")
+
+    if context.args:
+        filtro = context.args[0].upper()
+        if filtro not in stati_validi:
+            await update.effective_message.reply_text(
+                f"❌ Stato non valido. Stati possibili: {', '.join(s.lower() for s in stati_validi)}",
+            )
+            return
+        aste = db.get_aste_per_stato(filtro)
+        titolo = f"<b>Aste {filtro} ({len(aste)})</b>"
+    else:
+        aste = db.get_all_aste()[:30]
+        titolo = f"<b>Ultime {len(aste)} aste</b>"
+
+    if not aste:
+        await update.effective_message.reply_text("Nessuna asta trovata.")
+        return
+
+    righe = [titolo, ""]
+    for a in aste:
+        righe.append(
+            f"#{a['id']} [{a['stato']}] {a['tipo']} — <b>{a['giocatore']}</b> "
+            f"({a['offerta_corrente']}M, scade {utils.format_dt(a['scade_at'])})"
+        )
+
+    await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
+
+
+# ── /riapri_asta ──────────────────────────────────────────────────────────────
+
+async def riapri_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Riporta un'asta in stato CHIUSA o PAREGGIO allo stato APERTA,
+    con una nuova scadenza di N ore da adesso (default 18h).
+    Cancella i job di firma/pareggio pendenti e notifica nel canale.
+    Solo admin. Uso: /riapri_asta <asta_id> [ore]
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text(
+            "Uso: /riapri_asta &lt;asta_id&gt; [ore]\n"
+            "Esempio: /riapri_asta 42 6 — riapre con scadenza tra 6 ore\n"
+            "Default: 18 ore se non specificato.",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        asta_id = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text(
+            "❌ Serve l'ID numerico dell'asta. Usa /all_aste chiusa per vedere gli ID."
+        )
+        return
+
+    ore = 18
+    if len(context.args) > 1:
+        try:
+            ore = int(context.args[1])
+            if ore <= 0:
+                raise ValueError
+        except ValueError:
+            await update.effective_message.reply_text("❌ Le ore devono essere un intero positivo.")
+            return
+
+    asta = db.get_asta(asta_id)
+    if not asta:
+        await update.effective_message.reply_text("❌ Asta non trovata.")
+        return
+    if asta["stato"] not in ("CHIUSA", "PAREGGIO"):
+        await update.effective_message.reply_text(
+            f"❌ L'asta <b>{asta['giocatore']}</b> è in stato <b>{asta['stato']}</b>: "
+            f"/riapri_asta funziona solo su aste CHIUSA o PAREGGIO.",
+            parse_mode="HTML",
+        )
+        return
+
+    # cancella job pendenti
+    for nome in [f"firma_auto_{asta_id}", f"pareggio_auto_{asta_id}", f"notif15_{asta_id}"]:
+        for j in context.job_queue.get_jobs_by_name(nome):
+            j.schedule_removal()
+
+    nuova_scadenza = datetime.now(timezone.utc) + timedelta(hours=ore)
+    db.riapri_asta(asta_id, nuova_scadenza.isoformat())
+
+    from handlers.helpers import aggiorna_canale
+    await aggiorna_canale(context, asta_id)
+
+    admin_label = _admin_label(update.effective_user)
+    channel_id = utils.get_channel_id()
+    try:
+        await context.bot.send_message(
+            chat_id=channel_id,
+            text=(
+                f"🔄 Asta <b>{asta['giocatore']}</b> riaperta da <b>{admin_label}</b>.\n"
+                f"Nuova scadenza: <b>{utils.format_dt(nuova_scadenza.isoformat())}</b>"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await _log_warn(context, f"Annuncio riapertura canale fallito: {e}")
+
+    # notifica watcher
+    watchers = db.get_watchers(asta_id)
+    for gm_id in watchers:
+        try:
+            await context.bot.send_message(
+                chat_id=gm_id,
+                text=(
+                    f"🔄 L'asta per <b>{asta['giocatore']}</b> è stata riaperta da <b>{admin_label}</b>.\n"
+                    f"Nuova scadenza: <b>{utils.format_dt(nuova_scadenza.isoformat())}</b>"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            await _log_warn(context, f"Notifica riapertura watcher {gm_id}: {e}")
+
+    await update.effective_message.reply_text(
+        f"✅ Asta <b>{asta['giocatore']}</b> riaperta con scadenza tra {ore}h.\n"
+        f"Nuova scadenza: <b>{utils.format_dt(nuova_scadenza.isoformat())}</b>",
+        parse_mode="HTML",
+    )
+    logger.info("riapri_asta: asta_id=%d ore=%d nuova_scadenza=%s admin=%d",
+                asta_id, ore, nuova_scadenza.isoformat(), update.effective_user.id)
+
+
+# ── /ripubblica_asta ───────────────────────────────────────────────────────────
+
+async def ripubblica_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Pubblica un nuovo messaggio nel canale per un'asta esistente e aggiorna
+    canale_msg_id nel DB. Utile se il messaggio originale è stato cancellato
+    accidentalmente e aggiorna_canale continua a fallire.
+    Solo admin.
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /ripubblica_asta &lt;asta_id&gt;", parse_mode="HTML")
+        return
+
+    try:
+        asta_id = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso.")
+        return
+
+    asta = db.get_asta(asta_id)
+    if not asta:
+        await update.effective_message.reply_text("❌ Asta non trovata.")
+        return
+    if asta["stato"] in ("CONCLUSA", "ANNULLATA"):
+        await update.effective_message.reply_text(
+            f"❌ L'asta per <b>{asta['giocatore']}</b> è già {asta['stato'].lower()}, "
+            f"non ha senso ripubblicarla.",
+            parse_mode="HTML",
+        )
+        return
+
+    teams_map = {t["id"]: t["nome"] for t in tm.get_all_teams()}
+    offerte = db.get_offerte(asta_id)
+    testo = utils.build_canale_message(asta, offerte, teams_map)
+    channel_id = utils.get_channel_id()
+
+    keyboard = None
+    if asta["stato"] == "APERTA":
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "🏀 Offri",
+                url=f"https://t.me/{context.bot.username}?start=offri_{asta_id}"
+            ),
+            InlineKeyboardButton("🔔 Segui", callback_data=f"watch:{asta_id}"),
+        ]])
+
+    try:
+        msg = await context.bot.send_message(
+            chat_id=channel_id,
+            text=testo,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+    except Exception as e:
+        await update.effective_message.reply_text(f"❌ Invio nel canale fallito: {e}")
+        return
+
+    db.set_canale_msg_id(asta_id, msg.message_id)
+
+    await update.effective_message.reply_text(
+        f"✅ Asta <b>{asta['giocatore']}</b> ripubblicata nel canale.\n"
+        f"Nuovo canale_msg_id: <code>{msg.message_id}</code>",
+        parse_mode="HTML",
+    )
+    logger.info("ripubblica_asta: asta_id=%d nuovo_msg_id=%d admin=%d",
+                asta_id, msg.message_id, update.effective_user.id)
+
+
+# ── /force_esito ──────────────────────────────────────────────────────────────
+
+async def force_esito(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Rimanda manualmente il messaggio di firma/pareggio al GM o proprietario,
+    in base allo stato attuale dell'asta. Utile quando il job automatico è
+    saltato o il GM non ha ricevuto il messaggio (es. aveva bloccato il bot).
+    Non cambia lo stato dell'asta nel DB, si limita a reinviare i messaggi.
+    Solo admin.
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /force_esito &lt;asta_id&gt;", parse_mode="HTML")
+        return
+
+    try:
+        asta_id = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso.")
+        return
+
+    asta = db.get_asta(asta_id)
+    if not asta:
+        await update.effective_message.reply_text("❌ Asta non trovata.")
+        return
+
+    stato = asta["stato"]
+
+    if stato == "CHIUSA":
+        from handlers.firma import chiedi_anni, _chiedi_firma_proprietario_senza_offerte
+        if asta["offerente_team_id"]:
+            await chiedi_anni(context, asta_id)
+            await update.effective_message.reply_text(
+                f"✅ Rimandato il messaggio di scelta anni al GM vincitore di <b>{asta['giocatore']}</b>.",
+                parse_mode="HTML",
+            )
+        else:
+            if asta["tipo"] == "RFA":
+                await _chiedi_firma_proprietario_senza_offerte(context, asta_id)
+                await update.effective_message.reply_text(
+                    f"✅ Rimandato il messaggio al proprietario RFA di <b>{asta['giocatore']}</b> "
+                    f"(nessuna offerta — firma o lascia andare).",
+                    parse_mode="HTML",
+                )
+            else:
+                await update.effective_message.reply_text(
+                    f"❌ Asta FA <b>{asta['giocatore']}</b> in stato CHIUSA senza offerte: "
+                    f"nessun messaggio da mandare, andrebbe annullata con /annulla_asta.",
+                    parse_mode="HTML",
+                )
+            return
+
+    elif stato == "PAREGGIO":
+        if not asta["anni_offerti"]:
+            await update.effective_message.reply_text(
+                f"❌ Asta <b>{asta['giocatore']}</b> in PAREGGIO ma senza anni_offerti nel DB. "
+                f"Dato inconsistente, intervenire manualmente.",
+                parse_mode="HTML",
+            )
+            return
+        from handlers.firma import _chiedi_pareggio
+        await _chiedi_pareggio(context, asta_id, asta["anni_offerti"])
+        await update.effective_message.reply_text(
+            f"✅ Rimandato il messaggio di pareggio al proprietario RFA di <b>{asta['giocatore']}</b>.",
+            parse_mode="HTML",
+        )
+
+    else:
+        await update.effective_message.reply_text(
+            f"❌ L'asta <b>{asta['giocatore']}</b> è in stato <b>{stato}</b>: "
+            f"/force_esito funziona solo su aste in stato CHIUSA o PAREGGIO.",
+            parse_mode="HTML",
+        )
+        return
+
+    logger.info("force_esito: asta_id=%d stato=%s admin=%d", asta_id, stato, update.effective_user.id)
 
 
 # ── /admin ────────────────────────────────────────────────────────────────────
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Non sei autorizzato.")
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
         return
 
     testo = (
-        "<b>Comandi admin:</b>\n\n"
+        "<b>Comandi admin</b>\n"
+        "\n"
+        "<b>🏀 Aste</b>\n"
         "/nuova_rfa &lt;giocatore&gt; &lt;team_id&gt; &lt;vecchio_compenso&gt; — apre asta RFA\n"
+        "/aste — lista aste aperte\n"
+        "/all_aste [stato] — lista tutte le aste con filtro opzionale per stato\n"
         "/chiudi_asta &lt;asta_id&gt; — chiude forzatamente un'asta\n"
         "/annulla_asta &lt;asta_id&gt; — annulla un'asta\n"
+        "/annulla_offerta &lt;asta_id&gt; — annulla ultima offerta\n"
+        "/estendi_asta &lt;asta_id&gt; &lt;ore&gt; — sposta la scadenza in avanti di N ore\n"
+        "/sposta_asta &lt;asta_id&gt; &lt;YYYY-MM-DDTHH:MM&gt; — imposta scadenza precisa (ora di Roma)\n"
+        "/riapri_asta &lt;asta_id&gt; [ore] — riporta asta CHIUSA/PAREGGIO ad APERTA\n"
         "/reset_rfa — resetta flag RFA per nuova stagione\n"
+        "\n"
+        "<b>💰 Cap e slot</b>\n"
         "/set_cap &lt;team_id&gt; &lt;valore&gt; — imposta cap squadra\n"
         "/add_cap &lt;team_id&gt; &lt;importo&gt; — aggiunge/sottrae cap (accetta negativi)\n"
         "/set_slot &lt;team_id&gt; &lt;valore&gt; — imposta slot squadra\n"
         "/add_slot &lt;team_id&gt; &lt;importo&gt; — aggiunge/sottrae slot\n"
-        "/annulla_offerta &lt;asta_id&gt; — annulla ultima offerta\n"
         "/set_cap_penalizzato &lt;team_id&gt; &lt;valore&gt; — imposta penalità cap\n"
-        "/set_fase &lt;offseason|regular&gt; — cambia fase e scala cap\n"
+        "\n"
+        "<b>🏟️ Lega</b>\n"
         "/apri_mercato — apre il mercato FA\n"
         "/chiudi_mercato — chiude il mercato FA\n"
-        "/team &lt;team_id&gt; — situazione cap e slot di una squadra (come /me, per admin)\n"
-        "/aste — lista aste in corso\n"
+        "/set_fase &lt;offseason|regular&gt; — cambia fase e scala cap\n"
+        "/listteams — lista squadre con ID e cap\n"
+        "/team &lt;team_id&gt; — situazione cap e slot di una squadra\n"
+        "\n"
+        "<b>🔧 Recovery ed emergenza</b>\n"
+        "/ripubblica_asta &lt;asta_id&gt; — ripubblica il messaggio canale se cancellato per errore\n"
+        "/force_esito &lt;asta_id&gt; — rimanda il messaggio di firma/pareggio al GM senza reboottare\n"
+        "\n"
+        "<b>🔍 Diagnostica</b>\n"
+        "/stato_asta &lt;asta_id&gt; — dump completo del record DB di un'asta\n"
+        "/job_status — lista job attivi nella JobQueue con prossima esecuzione\n"
+        "\n"
         "/admin — questo messaggio"
     )
-    await update.message.reply_text(testo, parse_mode="HTML")
+    await update.effective_message.reply_text(testo, parse_mode="HTML")
 
 
 def get_handlers():
     return [
-        CommandHandler("nuova_rfa",      nuova_rfa),
-        CommandHandler("team",           cmd_team),
-        CommandHandler("listteams",      listteams),
-        CommandHandler("set_cap",        set_cap),
-        CommandHandler("set_slot",       set_slot),
-        CommandHandler("apri_mercato",   apri_mercato),
-        CommandHandler("chiudi_mercato", chiudi_mercato),
-        CommandHandler("set_fase",       set_fase),
-        CommandHandler("aste",           aste),
-        CommandHandler("chiudi_asta",    chiudi_asta),
-        CommandHandler("annulla_asta",   annulla_asta),
+        CommandHandler("nuova_rfa",        nuova_rfa),
+        CommandHandler("team",             cmd_team),
+        CommandHandler("listteams",        listteams),
+        CommandHandler("set_cap",          set_cap),
+        CommandHandler("set_slot",         set_slot),
+        CommandHandler("apri_mercato",     apri_mercato),
+        CommandHandler("chiudi_mercato",   chiudi_mercato),
+        CommandHandler("set_fase",         set_fase),
+        CommandHandler("aste",             aste),
+        CommandHandler("chiudi_asta",      chiudi_asta),
+        CommandHandler("annulla_asta",     annulla_asta),
         CommandHandler("reset_rfa",            reset_rfa),
         CommandHandler("set_cap_penalizzato",   set_cap_penalizzato),
+        CommandHandler("all_aste",              all_aste),
+        CommandHandler("riapri_asta",           riapri_asta),
+        CommandHandler("ripubblica_asta",       ripubblica_asta),
+        CommandHandler("force_esito",           force_esito),
+        CommandHandler("estendi_asta",          estendi_asta),
+        CommandHandler("sposta_asta",           sposta_asta),
+        CommandHandler("stato_asta",            stato_asta),
+        CommandHandler("job_status",            job_status),
         CallbackQueryHandler(reset_rfa_callback, pattern=r"^reset_rfa:conferma$"),
-        CommandHandler("admin",           cmd_admin),
+        CommandHandler("admin",            cmd_admin),
         CommandHandler("add_cap",          add_cap),
-        CommandHandler("add_slot",          add_slot),
-        CommandHandler("annulla_offerta",   annulla_offerta),
+        CommandHandler("add_slot",         add_slot),
+        CommandHandler("annulla_offerta",  annulla_offerta),
         CallbackQueryHandler(admin_chiudi_callback,  pattern=r"^admin_chiudi:\d+$"),
         CallbackQueryHandler(admin_annulla_callback, pattern=r"^admin_annulla:\d+$"),
         CallbackQueryHandler(admin_noop_callback,    pattern=r"^admin_noop$"),

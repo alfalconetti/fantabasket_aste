@@ -267,6 +267,7 @@ async def nuova_fa_importo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         squadra_proprietaria=None,
         creata_at=now.isoformat(),
         scade_at=scade.isoformat(),
+        stagione=utils.load_globals().get("stagione_corrente"),
     )
     db.registra_offerta(asta_id, team["id"], importo, now.isoformat())
     db.aggiorna_offerta(asta_id, team["id"], importo, scade.isoformat())

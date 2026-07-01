@@ -661,30 +661,16 @@ async def _registra_firma_finale(
     team      = tm.get_team_by_id(team_id)
     team_nome = team["nome"] if team else team_id
     gm_nome   = team.get("gm_nome", "") if team else ""
+    firma_label = f"🖊️ {gm_nome} firma" if gm_nome else "🖊️ Firma"
 
-    channel_id = utils.get_channel_id()
-    firma_label = f"{gm_nome} firma" if gm_nome else "Firma"
-    try:
-        await context.bot.send_message(
-            chat_id=channel_id,
-            text=(
-                f"🖊️ <b>FIRMA</b>\n"
-                f"<b>{asta['giocatore']}</b> → <b>{team_nome}</b>\n"
-                f"💰 {importo}M × {anni} ann{'o' if anni==1 else 'i'}"
-            ),
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        await _log_warn(context, f"Annuncio firma canale fallito: {e}")
-
-    # Annuncio nel canale principale lega (solo firme)
+    # Annuncio nel canale principale lega
     main_channel_id = utils.load_globals().get("main_channel_id")
     if main_channel_id:
         try:
             await context.bot.send_message(
                 chat_id=main_channel_id,
                 text=(
-                    f"🖊️ <b>{firma_label} {asta['giocatore']}</b> con <b>{team_nome}</b>\n"
+                    f"<b>{firma_label} {asta['giocatore']}</b> con <b>{team_nome}</b>\n"
                     f"💰 {importo}M × {anni} ann{'o' if anni==1 else 'i'}"
                 ),
                 parse_mode="HTML",

@@ -21,6 +21,7 @@ Sviluppato con [Claude](https://claude.ai) (Anthropic).
 ├── scheduler.py            # Job periodico: scadenze e notifiche
 ├── handlers/
 │   ├── helpers.py          # Funzioni condivise (aggiorna_canale, notifica_watchers, log_warn, log_job_error)
+│   ├── dev.py              # Comandi diagnostici riservati al dev_id
 │   ├── offerte.py          # Flusso offerte FA/RFA
 │   ├── firma.py            # Flusso firma, pareggio RFA
 │   ├── user.py             # Comandi utente: /me /watched /lista_fa /autocap /autoslot /silenzia
@@ -129,6 +130,7 @@ docker compose logs -f
 
 - [Guida GM](docs/guida_gm.md)
 - [Guida Admin](docs/guida_admin.md)
+- [Emergency Recovery](docs/emergency_recovery.md)
 - [Changelog](CHANGELOG.md)
 
 ## Comandi utente
@@ -166,6 +168,14 @@ docker compose logs -f
 | `/apri_mercato` / `/chiudi_mercato` | Gestisce mercato FA |
 | `/listteams` | Lista squadre con ID e cap virtuale |
 | `/team <team_id>` | Situazione cap/slot dettagliata di una squadra (come `/me`, per admin) |
+| `/all_aste [stato]` | Lista tutte le aste con filtro opzionale per stato |
+| `/riapri_asta <asta_id> [ore]` | Riporta asta CHIUSA/PAREGGIO ad APERTA con nuova scadenza |
+| `/ripubblica_asta <asta_id>` | Ripubblica il messaggio canale di un'asta se cancellato per errore |
+| `/force_esito <asta_id>` | Rimanda il messaggio di firma/pareggio al GM senza reboottare |
+| `/estendi_asta <asta_id> <ore>` | Sposta la scadenza in avanti di N ore |
+| `/sposta_asta <asta_id> <YYYY-MM-DDTHH:MM>` | Imposta scadenza precisa (ora di Roma) |
+| `/stato_asta <asta_id>` | Dump completo del record DB di un'asta |
+| `/job_status` | Lista job attivi nella JobQueue con prossima esecuzione |
 | `/aste` | Lista aste con ID |
 | `/admin` | Lista comandi admin |
 | `/reboot` | Riavvia il bot (solo dev) |

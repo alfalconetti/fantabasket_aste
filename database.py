@@ -363,3 +363,99 @@ def get_watchers(asta_id: int) -> list[int]:
             "SELECT gm_id FROM aste_watch WHERE asta_id=?", (asta_id,)
         ).fetchall()
         return [r["gm_id"] for r in rows]
+
+
+# ── funzioni per comandi admin/dev ────────────────────────────────────────────
+
+def set_scade_at(asta_id: int, scade_at: str):
+    """Aggiorna la scadenza di un'asta."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE aste SET scade_at=? WHERE id=?",
+            (scade_at, asta_id),
+        )
+
+def set_canale_msg_id(asta_id: int, msg_id: int):
+    """Aggiorna il message_id del messaggio canale di un'asta."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE aste SET canale_msg_id=? WHERE id=?",
+            (msg_id, asta_id),
+        )
+
+def get_all_aste() -> list:
+    """Restituisce tutte le aste, qualsiasi stato, ordinate per id desc."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM aste ORDER BY id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+def get_all_watchers() -> list:
+    """
+    Restituisce tutti i watcher attivi con info sull'asta associata.
+    Usato da /dev_watched.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT w.asta_id, w.gm_id AS user_id, a.giocatore, a.stato
+            FROM aste_watch w
+            JOIN aste a ON a.id = w.asta_id
+            ORDER BY w.asta_id
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+def get_rfa_stagione(stagione: str) -> list:
+    """
+    Restituisce tutte le aste RFA di una stagione specifica.
+    Usato da /dev_rfa.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM aste WHERE tipo='RFA' AND stagione=? ORDER BY id DESC",
+            (stagione,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+def get_ultime_firme(n: int = 10) -> list:
+    """
+    Restituisce le ultime N aste concluse con firma (CONCLUSA con offerente).
+    Usato da /dev_firme.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM aste
+            WHERE stato='CONCLUSA' AND offerente_team_id IS NOT NULL
+            ORDER BY conclusa_at DESC
+            LIMIT ?
+            """,
+            (n,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+def get_aste_per_stato(stato: str) -> list:
+    """Restituisce tutte le aste con un dato stato, ordinate per id desc."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM aste WHERE stato=? ORDER BY id DESC",
+            (stato,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+def riapri_asta(asta_id: int, nuova_scadenza: str):
+    """
+    Riporta un'asta da CHIUSA/PAREGGIO ad APERTA con una nuova scadenza.
+    Azzera anni_offerti per pulire lo stato del flusso RFA interrotto.
+    """
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE aste
+            SET stato='APERTA', scade_at=?, anni_offerti=NULL, notifica_15min=0
+            WHERE id=?
+            """,
+            (nuova_scadenza, asta_id),
+        )

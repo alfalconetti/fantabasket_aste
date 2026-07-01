@@ -14,7 +14,10 @@ from handlers.admin   import get_handlers as admin_handlers
 from handlers.offerte import get_handlers as offerte_handlers
 from handlers.firma   import get_handlers as firma_handlers
 from handlers.user    import get_handlers as user_handlers
+from handlers.dev     import get_handlers as dev_handlers
 from scheduler        import check_scadenze, ping_healthcheck, backup_giornaliero, backup_settimanale
+
+BOT_VERSION = "v27"
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -83,6 +86,10 @@ async def recupera_stati_pendenti(context: ContextTypes.DEFAULT_TYPE):
     from handlers.helpers import aggiorna_canale, log_job_error
 
     try:
+        # avviso riavvio sempre, a prescindere dagli stati pendenti
+        ora = utils.format_dt(datetime.now(timezone.utc).isoformat())
+        await _send_log(context.bot, f"🔄 Bot riavviato ({BOT_VERSION}) — {ora}")
+
         chiuse = db.get_aste_chiuse()
         for asta in chiuse:
             logger.info("Recupero asta CHIUSA id=%d giocatore=%s", asta["id"], asta["giocatore"])
@@ -130,6 +137,8 @@ def main():
     for h in firma_handlers():
         app.add_handler(h)
     for h in user_handlers():
+        app.add_handler(h)
+    for h in dev_handlers():
         app.add_handler(h)
 
     app.add_handler(CommandHandler("reboot", cmd_reboot))

@@ -31,6 +31,28 @@ Quando modifichi cap o slot, il GM della squadra riceve automaticamente una noti
 `/annulla_asta <id>` — annulla un'asta senza vincitore. Notifica tutti gli interessati (vincitore, proprietario RFA, watcher).
 `/annulla_offerta <id>` — elimina l'ultima offerta e ripristina la precedente. Notifica il GM a cui viene annullata e i watcher. Warning automatico se il cap virtuale diventa negativo.
 
+Tutti i comandi che modificano lo stato di un'asta o del mercato includono ora il nome dell'admin nella notifica inviata ai GM e nel canale log, per tracciabilità completa delle azioni.
+
+`/all_aste [stato]` — lista tutte le aste con filtro opzionale per stato (`aperta`, `chiusa`, `pareggio`, `conclusa`, `annullata`). Senza argomenti mostra le ultime 30. Indispensabile per trovare l'ID di un'asta non più visibile in `/aste`, ad esempio per usare `/force_esito` o `/stato_asta`.
+
+`/riapri_asta <asta_id> [ore]` — riporta un'asta da CHIUSA o PAREGGIO ad APERTA con una nuova scadenza. Default 18h se non specificato. Cancella automaticamente i job di firma/pareggio pendenti, aggiorna il messaggio nel canale, notifica i watcher e manda un annuncio nel canale.
+
+## Comandi di osservazione e diagnostica
+
+`/stato_asta <asta_id>` — dump completo di tutti i campi DB di un'asta con storico offerte. Alternativa rapida all'aprire sqlite3 manualmente.
+
+`/job_status` — mostra tutti i job attivi nella JobQueue con nome e prossima esecuzione prevista. Utile per verificare che `firma_automatica` e `pareggio_automatico` siano ancora schedulati dopo un recovery o un comportamento anomalo.
+
+`/estendi_asta <asta_id> <ore>` — sposta la scadenza di un'asta in avanti di N ore e aggiorna il messaggio nel canale. Utile quando un GM non riesce a collegarsi in tempo.
+
+`/sposta_asta <asta_id> <YYYY-MM-DDTHH:MM>` — imposta una scadenza precisa invece di aggiungere ore relative. L'orario si intende in ora di Roma. Utile per allineare più aste che vuoi facciano scadere la stessa sera.
+
+## Comandi di recupero emergenza
+
+`/ripubblica_asta <asta_id>` — se il messaggio di un'asta nel canale viene cancellato per errore, questo comando pubblica un nuovo messaggio aggiornato e corregge il riferimento nel DB. Senza questo intervento `aggiorna_canale` continua a fallire (con avviso sul canale log) ad ogni rilancio finché non si sistema manualmente.
+
+`/force_esito <asta_id>` — rimanda manualmente il messaggio di firma o pareggio al GM interessato, senza dover reboottare il bot. Funziona solo su aste in stato CHIUSA o PAREGGIO. Non modifica il DB né cambia lo stato dell'asta: si limita a reinviare i messaggi e rischedulare i timeout automatici. Utile quando il GM non ha ricevuto il messaggio (es. aveva bloccato il bot temporaneamente) o quando il job automatico è saltato senza che se ne accorgesse nessuno.
+
 ## Diagnostica e manutenzione
 
 `/admin` — lista comandi admin

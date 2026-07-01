@@ -186,3 +186,59 @@ Prima versione funzionante. Struttura iniziale del progetto con bot.py, database
 - Nuova funzione `log_job_error()` in `handlers/helpers.py`: cattura l'eccezione, logga il traceback completo, lo invia al canale log e in privato al dev
 - Tutti i job periodici ora sono avvolti in try/except che chiama `log_job_error`, senza alcuna modifica alla logica esistente all'interno
 - Un'eccezione su una singola asta dentro `check_scadenze` non resta più invisibile: viene notificata su Telegram. Il giro corrente del job si interrompe comunque al punto dell'errore (comportamento invariato), ma il giro successivo (60s dopo) riprende regolarmente da capo
+
+## v22 — Comandi di recupero emergenza
+- `/ripubblica_asta <asta_id>` solo admin — pubblica un nuovo messaggio nel canale per un'asta esistente e aggiorna `canale_msg_id` nel DB. Utile se il messaggio originale viene cancellato per errore: senza questo comando `aggiorna_canale` continua a fallire ad ogni rilancio finché non si sistema manualmente il DB
+- `/force_esito <asta_id>` solo admin — rimanda il messaggio di firma/pareggio appropriato al GM senza dover reboottare il bot. In base allo stato dell'asta: CHIUSA con vincitore → rimanda `chiedi_anni`; CHIUSA RFA senza offerte → rimanda il messaggio al proprietario; PAREGGIO → rimanda `_chiedi_pareggio`. Non modifica il DB, si limita a reinviare i messaggi e rischedulare i timeout
+
+## v23 — Comandi admin avanzati e comandi dev
+
+### Fix
+- Rimosso annuncio firma duplicato su `channel_id`: ora viene mandato solo su `main_channel_id`. Il messaggio dell'asta nel canale viene già aggiornato con ✅ CONTRATTO FIRMATO da `aggiorna_canale`, l'annuncio separato era ridondante
+
+### Nuovi comandi admin
+- `/estendi_asta <asta_id> <ore>` — sposta la scadenza di un'asta in avanti di N ore, aggiorna il messaggio nel canale
+- `/sposta_asta <asta_id> <YYYY-MM-DDTHH:MM>` — imposta una scadenza precisa (ora di Roma), utile per allineare più aste che scadono la stessa sera
+- `/stato_asta <asta_id>` — dump completo di tutti i campi DB di un'asta con storico offerte, per debug rapido senza aprire sqlite3
+- `/job_status` — lista tutti i job attivi nella JobQueue con nome e prossima esecuzione prevista, utile per verificare che i timeout automatici siano ancora schedulati dopo un recovery
+
+### Nuovo file handlers/dev.py
+Comandi riservati al solo `dev_id` (non visibili in /admin), per osservare lo stato del sistema senza aprire sqlite3:
+- `/dev_aste_stato` — tutte le aste raggruppate per stato (APERTA, CHIUSA, PAREGGIO, CONCLUSA, ANNULLATA) con conteggio
+- `/dev_watched` — tutti i watcher attivi raggruppati per asta con user_id
+- `/dev_rfa` — tutte le aste RFA della stagione corrente con stato e team proprietario
+- `/dev_firme [N]` — ultime N firme concluse con importo, anni e team (default 10, max 50)
+
+## v24 — Robustezza input admin e nome admin nelle notifiche
+
+### Fix
+- Sostituito `update.message` con `update.effective_message` in tutti i comandi di `admin.py` — `update.message` può essere `None` in alcuni contesti (reply a messaggi forwarded, callback, ecc.) causando crash; `effective_message` funziona in qualsiasi contesto
+- Messaggi di errore per argomenti non validi resi descrittivi: "❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso." invece del generico "❌ ID non valido."
+
+### Miglioramenti notifiche
+- Aggiunto helper `_admin_label(user)` — costruisce uniformemente "Nome (@username)" o "Nome" se l'username manca
+- Il nome dell'admin che ha eseguito il comando compare ora in tutte le notifiche rilevanti:
+  - Annullamento asta → GM vincitore, proprietario RFA, watcher, canale
+  - Annullamento offerta → GM, watcher, canale
+  - Apertura/chiusura mercato FA → canale log
+  - Estensione/spostamento scadenza asta → canale log
+
+## v25 — Trasparenza azioni admin nel canale
+
+- Chiusura asta anticipata da admin → annuncio nel canale aste con nome admin + notifica ai watcher (escluso il GM vincitore che viene già contattato per la firma)
+- Apertura nuova RFA da admin → annuncio separato nel canale aste con nome admin (oltre al messaggio dell'asta già pubblicato)
+- Estensione scadenza asta → annuncio nel canale aste con ore aggiunte e nuova scadenza, oltre al canale log
+- Spostamento scadenza asta → annuncio nel canale aste con nuova scadenza, oltre al canale log
+
+## v26 — /all_aste, /riapri_asta e notifica GM vincitore
+
+- `/all_aste [stato]` solo admin — lista tutte le aste con filtro opzionale per stato (aperta, chiusa, pareggio, conclusa, annullata). Senza argomenti mostra le ultime 30. Utile per trovare l'ID di un'asta non più visibile in `/aste`
+- `/riapri_asta <asta_id> [ore]` solo admin — riporta un'asta da CHIUSA o PAREGGIO ad APERTA con nuova scadenza (default 18h). Cancella i job pendenti di firma/pareggio, notifica nel canale e avvisa i watcher
+- Chiusura anticipata da admin: il GM vincitore riceve un messaggio in privata che lo avvisa della chiusura anticipata prima della richiesta di firma; il proprietario RFA (se presente) viene avvisato che riceverà a breve la richiesta di pareggio
+
+## v27 — Avviso riavvio, stagione FA, apertura RFA nel messaggio
+
+- Avviso riavvio incondizionato sul canale log ad ogni restart, con versione e orario — prima arrivava solo se c'erano aste pendenti da recuperare
+- Aggiunta costante `BOT_VERSION` in `bot.py` — compare nel messaggio di riavvio
+- Stagione corrente ora salvata anche nelle aste FA (prima era `None`)
+- "Aperta da X" integrato direttamente nel messaggio dell'asta RFA nel canale, invece di un secondo messaggio separato; rimosso il `send_message` ridondante

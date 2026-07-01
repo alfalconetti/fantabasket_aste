@@ -150,7 +150,7 @@ def format_dt_short(s: str) -> str:
 
 # ── formattazione messaggio canale ────────────────────────────────────────────
 
-def build_canale_message(asta: dict, offerte: list, teams_map: dict) -> str:
+def build_canale_message(asta: dict, offerte: list, teams_map: dict, aperta_da: str = None) -> str:
     tipo_label = "🔴 RFA" if asta["tipo"] == "RFA" else "🟢 FREE AGENCY"
 
     if asta["tipo"] == "RFA" and asta["squadra_proprietaria"]:
@@ -160,6 +160,9 @@ def build_canale_message(asta: dict, offerte: list, teams_map: dict) -> str:
         header = f"{tipo_label} — <b>{asta['giocatore']}</b> <i>(diritti: {prop_nome}{vec_str})</i>"
     else:
         header = f"{tipo_label} — <b>{asta['giocatore']}</b>"
+
+    if aperta_da:
+        header += f"\n<i>Aperta da {aperta_da}</i>"
 
     if offerte:
         righe = []
