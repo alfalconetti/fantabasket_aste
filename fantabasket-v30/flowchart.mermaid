@@ -1,0 +1,83 @@
+flowchart TD
+    subgraph GM["👤 GM"]
+        A1["/nuova_fa"] --> B1{Giocatore trovato?}
+        B1 -->|esatto| B2{Mercato aperto?}
+        B1 -->|cognome| B2
+        B1 -->|omonimi| SEL[Scegli giocatore]
+        SEL --> B2
+        B1 -->|fuzzy| CONF["Intendevi X?"]
+        CONF -->|sì| B2
+        B1 -->|no match| ERR1[❌ Non trovato]
+        B2 -->|no| ERR2[❌ Mercato chiuso]
+        B2 -->|sì| IMP1[Inserisci importo]
+        IMP1 --> VAL1{Valida cap/slot}
+        VAL1 -->|ok| CREA_FA[Crea asta FA\nRegistra offerta]
+        VAL1 -->|ko| IMP1
+
+        A2["/offri o 🏀 nel canale"] --> LIST[Lista aste paginate]
+        LIST --> SCEGLI[Scegli asta]
+        SCEGLI --> IMP2[Inserisci importo]
+        IMP2 --> VAL2{Valida cap/slot\nauto-rilancio\ndiritti RFA}
+        VAL2 -->|ok| REG[Registra offerta\nReset timer 18h]
+        VAL2 -->|ko| IMP2
+    end
+
+    subgraph ADMIN["🔑 Admin"]
+        AD1["/nuova_rfa giocatore team compenso"] --> CREA_RFA[Crea asta RFA]
+        AD2["/chiudi_asta id"] --> CH{Vincitore?}
+        CH -->|sì| FIRMA_FLOW
+        CH -->|no FA| ANN_ASTA[ANNULLATA]
+        CH -->|no RFA| PROP_FLOW
+        AD3["/annulla_asta id"] --> ANN_ASTA
+    end
+
+    CREA_FA --> CANALE[📢 Messaggio canale]
+    CREA_RFA --> CANALE
+    REG --> CANALE
+    REG --> NOTIF_W[🔔 Notifica watcher]
+    REG --> NOTIF_PROP[⚠️ Notifica proprietario RFA]
+
+    subgraph SCHEDULER["⏱️ Scheduler ogni 60s — try/except con log su canale + dev"]
+        SCH{Asta scaduta?}
+        SCH -->|sì, con vincitore| CHIUDI[CHIUSA\naggiorna canale]
+        SCH -->|sì, senza vincitore FA| ANN_ASTA
+        SCH -->|sì, senza vincitore RFA| PROP_FLOW
+        SCH -->|N min alla scadenza| NOTIF_15[🔔 Notifica scadenza\na tutti i watcher]
+    end
+
+    subgraph FIRMA_FLOW["✍️ Flusso Firma FA"]
+        CHIUDI --> CHIEDI_ANNI_FA[Messaggio privato\nscegli anni 1-2-3]
+        CHIEDI_ANNI_FA -->|risponde| VAL_ANNI_FA{Anni validi?}
+        VAL_ANNI_FA -->|sì| FIRMA_FA[CONCLUSA\nscala cap+slot\nsegna firmato CSV]
+        VAL_ANNI_FA -->|no| CHIEDI_ANNI_FA
+        CHIEDI_ANNI_FA -->|48h timeout| FIRMA_AUTO_FA[3 anni penale\nautomatici]
+        FIRMA_AUTO_FA --> FIRMA_FA
+    end
+
+    subgraph FIRMA_RFA["✍️ Flusso Firma RFA"]
+        CHIUDI_RFA[CHIUSA RFA] --> CHIEDI_ANNI_RFA[Messaggio privato\nvincitore scegli anni]
+        CHIEDI_ANNI_RFA -->|12h timeout| ANNI_MIN[Anni minimi\nautomatici]
+        CHIEDI_ANNI_RFA -->|risponde| PAREGGIO_ST[PAREGGIO\naggiorna canale]
+        ANNI_MIN --> PAREGGIO_ST
+        PAREGGIO_ST --> CHIEDI_PAR[Messaggio privato\nproprietario: pareggi?]
+        CHIEDI_PAR -->|sì| VAL_PAR{Check cap+slot\nproprietario}
+        VAL_PAR -->|ok| PAR_ANNI[Scegli anni pareggio]
+        PAR_ANNI --> FIRMA_PROP_RFA[CONCLUSA\nlibera vecchio cap\nscala cap+slot proprietario]
+        VAL_PAR -->|ko| ERR_PAR[❌ Cap/slot insufficienti]
+        CHIEDI_PAR -->|no| FIRMA_VINCE[CONCLUSA\nlibera vecchio cap\nscala cap+slot vincitore]
+        CHIEDI_PAR -->|24h timeout| FIRMA_VINCE
+    end
+
+    subgraph PROP_FLOW["🏠 Flusso Proprietario RFA senza offerte"]
+        PROP_MSG[Messaggio privato\nfirmi o lasci andare?]
+        PROP_MSG -->|firmo| VAL_PROP{Check cap+slot}
+        VAL_PROP -->|ok| PROP_ANNI[Scegli anni]
+        PROP_ANNI --> FIRMA_PROP2[CONCLUSA\nlibera vecchio cap\nscala cap+slot]
+        VAL_PROP -->|ko| ERR_PROP[❌ Cap/slot insufficienti]
+        PROP_MSG -->|lascio andare| LASCIA[ANNULLATA\nlibera vecchio cap]
+    end
+
+    FIRMA_FA --> ANNUNCIO[📢 Annuncio firma canale\n🔔 Notifica watcher]
+    FIRMA_PROP_RFA --> ANNUNCIO
+    FIRMA_VINCE --> ANNUNCIO
+    FIRMA_PROP2 --> ANNUNCIO

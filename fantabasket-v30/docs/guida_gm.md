@@ -14,7 +14,7 @@ Manda `/start` al bot in privato — obbligatorio almeno una volta per ricevere 
 `/annulla` — esci da qualsiasi operazione se il bot sembra bloccato ad aspettare qualcosa.
 
 ### Info
-`/lista_fa` — lista giocatori FA disponibili. Clicca su un giocatore per aprire direttamente l'asta senza dover scrivere il nome — lista paginata di tutti i giocatori FA disponibili con fantamedia. 🟡 significa che c'è già un'asta aperta. Clicca un giocatore per avere il comando pronto da copiare.
+`/lista_fa` — lista paginata di tutti i giocatori FA disponibili con fantamedia. 🟡 significa che c'è già un'asta aperta. Clicca un giocatore per avere il comando pronto da copiare.
 
 `/aste` — tutte le aste in corso con offerta attuale, scadenza e ID.
 

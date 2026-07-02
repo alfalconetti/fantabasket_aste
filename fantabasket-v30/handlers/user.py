@@ -151,7 +151,7 @@ async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /lista_fa ─────────────────────────────────────────────────────────────────
 
-def _lista_fa_keyboard(rows: list[dict], aste_aperte_giocatori: set, page: int, bot_username: str = None) -> InlineKeyboardMarkup:
+def _lista_fa_keyboard(rows: list[dict], aste_aperte_giocatori: set, page: int) -> InlineKeyboardMarkup:
     page_size = settings.paginazione_fa()
     start = page * page_size
     pagina = rows[start: start + page_size]
@@ -162,13 +162,7 @@ def _lista_fa_keyboard(rows: list[dict], aste_aperte_giocatori: set, page: int, 
         pallino = "🟡 " if r["nome"] in aste_aperte_giocatori else ""
         fm = f" — FM: {r['fantamedia']}" if r["fantamedia"] else ""
         label = f"{pallino}{r['nome']}{fm}"
-        if bot_username:
-            # deep link: spazi → underscore, altri caratteri speciali lasciati (Telegram li gestisce)
-            nome_enc = r["nome"].replace(" ", "_")
-            url = f"https://t.me/{bot_username}?start=nuova_fa_{nome_enc}"
-            righe_kb.append([InlineKeyboardButton(label, url=url)])
-        else:
-            righe_kb.append([InlineKeyboardButton(label, callback_data=f"fa_avvia:{r['nome']}")])
+        righe_kb.append([InlineKeyboardButton(label, callback_data=f"fa_avvia:{r['nome']}")])
 
     nav = []
     if page > 0:
@@ -190,10 +184,9 @@ async def cmd_lista_fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     aste_aperte_giocatori = {a["giocatore"] for a in db.get_aste_aperte()}
     aste_aperte_giocatori |= {a["giocatore"] for a in db.get_aste_chiuse()}
 
-    bot_username = context.bot.username
-    kb = _lista_fa_keyboard(rows, aste_aperte_giocatori, 0, bot_username)
+    kb = _lista_fa_keyboard(rows, aste_aperte_giocatori, 0)
     await update.effective_message.reply_text(
-        "🟢 <b>Giocatori FA disponibili</b>\n🟡 = asta in corso\nClicca per aprire subito l'asta:",
+        "🟢 <b>Giocatori FA disponibili</b>\n🟡 = asta in corso\nClicca per avviare asta:",
         parse_mode="HTML",
         reply_markup=kb,
     )
@@ -206,8 +199,7 @@ async def lista_fa_page_callback(update: Update, context: ContextTypes.DEFAULT_T
     rows = [r for r in utils.get_fa_rows() if r["firmato"] == "0"]
     aste_aperte_giocatori = {a["giocatore"] for a in db.get_aste_aperte()}
     aste_aperte_giocatori |= {a["giocatore"] for a in db.get_aste_chiuse()}
-    bot_username = context.bot.username
-    kb = _lista_fa_keyboard(rows, aste_aperte_giocatori, page, bot_username)
+    kb = _lista_fa_keyboard(rows, aste_aperte_giocatori, page)
     await query.edit_message_reply_markup(reply_markup=kb)
 
 
@@ -231,20 +223,11 @@ async def lista_fa_avvia_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.answer(f"❌ Esiste già un'asta aperta per {nome}.", show_alert=True)
         return
 
-    # Deep link: sostituisce spazi con _ per compatibilità URL
-    nome_encoded = nome.replace(" ", "_")
-    bot_username = context.bot.username
-    deep_link = f"https://t.me/{bot_username}?start=nuova_fa_{nome_encoded}"
-
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton(f"🏀 Apri asta per {nome}", url=deep_link)
-    ]])
     await query.message.reply_text(
-        f"Clicca per aprire l'asta FA per <b>{nome}</b>:",
+        f"Per aprire l'asta per <b>{nome}</b>, scrivi:",
         parse_mode="HTML",
-        reply_markup=kb,
     )
+    await query.message.reply_text(f"/nuova_fa {nome}")
 
 
 async def cmd_silenzia(update: Update, context: ContextTypes.DEFAULT_TYPE):

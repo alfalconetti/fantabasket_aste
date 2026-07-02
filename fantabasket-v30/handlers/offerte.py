@@ -69,14 +69,6 @@ def _check_cap(team_id: str, importo: int) -> tuple[bool, int]:
     return cap_libero >= importo, cap_libero
 
 
-def _cap_libero(team_id: str) -> int:
-    """Restituisce il cap effettivamente libero (disponibile - virtuale impegnato)."""
-    team = tm.get_team_by_id(team_id)
-    if not team:
-        return 0
-    return team["cap_disponibile"] - db.get_cap_virtuale(team_id)
-
-
 # ── /nuova_fa ─────────────────────────────────────────────────────────────────
 
 async def nuova_fa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -103,14 +95,6 @@ async def nuova_fa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if nome_esatto:
         if db.giocatore_gia_in_asta(nome_esatto):
             await msg.reply_text(f"❌ Esiste già un'asta aperta per <b>{nome_esatto}</b>.", parse_mode="HTML")
-            return ConversationHandler.END
-        cap = _cap_libero(team["id"])
-        if cap < settings.rilancio_minimo():
-            await msg.reply_text(
-                f"❌ Non hai cap sufficiente per aprire un'asta.\n"
-                f"Cap libero: <b>{cap}M</b> — minimo richiesto: <b>{settings.rilancio_minimo()}M</b>.",
-                parse_mode="HTML",
-            )
             return ConversationHandler.END
         context.user_data["nuova_fa_giocatore"] = nome_esatto
         context.user_data["nuova_fa_team"] = team
@@ -177,15 +161,6 @@ async def nuova_fa_omonimo_callback(update: Update, context: ContextTypes.DEFAUL
     if db.giocatore_gia_in_asta(nome):
         await query.edit_message_text(f"❌ Esiste già un'asta aperta per <b>{nome}</b>.", parse_mode="HTML")
         return ConversationHandler.END
-    team = context.user_data.get("nuova_fa_team") or tm.get_team_by_gm(query.from_user.id)
-    cap = _cap_libero(team["id"]) if team else 0
-    if cap < settings.rilancio_minimo():
-        await query.edit_message_text(
-            f"❌ Non hai cap sufficiente per aprire un'asta.\n"
-            f"Cap libero: <b>{cap}M</b> — minimo richiesto: <b>{settings.rilancio_minimo()}M</b>.",
-            parse_mode="HTML",
-        )
-        return ConversationHandler.END
     context.user_data["nuova_fa_giocatore"] = nome
     await query.edit_message_text(
         f"🏀 Nuova asta FA per <b>{nome}</b>.\n\nQuanto offri? (minimo {settings.rilancio_minimo()}M)\n"
@@ -228,15 +203,6 @@ async def nuova_fa_conferma_callback(update: Update, context: ContextTypes.DEFAU
 
     if db.giocatore_gia_in_asta(suggerimento):
         await query.edit_message_text(f"❌ Esiste già un'asta aperta per <b>{suggerimento}</b>.", parse_mode="HTML")
-        return ConversationHandler.END
-
-    cap = _cap_libero(team["id"])
-    if cap < settings.rilancio_minimo():
-        await query.edit_message_text(
-            f"❌ Non hai cap sufficiente per aprire un'asta.\n"
-            f"Cap libero: <b>{cap}M</b> — minimo richiesto: <b>{settings.rilancio_minimo()}M</b>.",
-            parse_mode="HTML",
-        )
         return ConversationHandler.END
 
     context.user_data["nuova_fa_giocatore"] = suggerimento
@@ -545,7 +511,7 @@ async def start_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user = update.effective_user
     team = tm.get_team_by_gm(user.id)
 
-    if not context.args or (not context.args[0].startswith("offri_") and not context.args[0].startswith("nuova_fa_")):
+    if not context.args or not context.args[0].startswith("offri_"):
         if team:
             guida = (
                 f"Ciao <b>{user.first_name}</b>! Benvenuto nel bot aste Fantabasket 🏀\n\n"
@@ -579,50 +545,6 @@ async def start_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.effective_message.reply_text("⛔ Non sei registrato come GM di nessuna squadra.")
         return ConversationHandler.END
 
-    # ── deep link nuova_fa_<nome> ──────────────────────────────────────────────
-    if context.args[0].startswith("nuova_fa_"):
-        # Il nome arriva URL-encoded con _ al posto degli spazi
-        nome = context.args[0][len("nuova_fa_"):].replace("_", " ")
-
-        if not utils.is_mercato_aperto():
-            await update.effective_message.reply_text("🔒 Il mercato FA è attualmente chiuso.")
-            return ConversationHandler.END
-
-        # Il nome viene dalla lista FA quindi è già esatto — verifica comunque
-        nome_esatto, _, _ = utils.trova_giocatore_fa(nome)
-        if not nome_esatto:
-            await update.effective_message.reply_text(
-                f"❌ Giocatore '<b>{nome}</b>' non trovato nella lista FA.",
-                parse_mode="HTML",
-            )
-            return ConversationHandler.END
-
-        if db.giocatore_gia_in_asta(nome_esatto):
-            await update.effective_message.reply_text(
-                f"❌ Esiste già un'asta aperta per <b>{nome_esatto}</b>.", parse_mode="HTML"
-            )
-            return ConversationHandler.END
-
-        cap = _cap_libero(team["id"])
-        if cap < settings.rilancio_minimo():
-            await update.effective_message.reply_text(
-                f"❌ Non hai cap sufficiente per aprire un'asta.\n"
-                f"Cap libero: <b>{cap}M</b> — minimo richiesto: <b>{settings.rilancio_minimo()}M</b>.",
-                parse_mode="HTML",
-            )
-            return ConversationHandler.END
-
-        context.user_data["nuova_fa_giocatore"] = nome_esatto
-        context.user_data["nuova_fa_team"] = team
-        await update.effective_message.reply_text(
-            f"🏀 Nuova asta FA per <b>{nome_esatto}</b>.\n\n"
-            f"Quanto offri? (minimo {settings.rilancio_minimo()}M)\n"
-            f"<i>Per annullare: /annulla</i>",
-            parse_mode="HTML",
-        )
-        return NUOVA_FA_IMPORTO
-
-    # ── deep link offri_<asta_id> ──────────────────────────────────────────────
     try:
         asta_id = int(context.args[0].split("_")[1])
     except (IndexError, ValueError):
@@ -640,16 +562,6 @@ async def start_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if asta["tipo"] == "RFA" and asta["squadra_proprietaria"] == team["id"]:
         await update.effective_message.reply_text("❌ Detieni i diritti RFA: non puoi offrire.")
-        return ConversationHandler.END
-
-    min_offerta = asta["offerta_corrente"] + settings.rilancio_minimo()
-    cap = _cap_libero(team["id"])
-    if cap < min_offerta:
-        await update.effective_message.reply_text(
-            f"❌ Non hai cap sufficiente per fare un'offerta su <b>{asta['giocatore']}</b>.\n"
-            f"Cap libero: <b>{cap}M</b> — minimo necessario: <b>{min_offerta}M</b>.",
-            parse_mode="HTML",
-        )
         return ConversationHandler.END
 
     context.user_data["asta_id"] = asta_id

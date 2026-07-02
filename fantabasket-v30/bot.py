@@ -17,7 +17,7 @@ from handlers.user    import get_handlers as user_handlers
 from handlers.dev     import get_handlers as dev_handlers
 from scheduler        import check_scadenze, ping_healthcheck, backup_giornaliero, backup_settimanale
 
-BOT_VERSION = "v32"
+BOT_VERSION = "v30"
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
