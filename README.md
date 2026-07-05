@@ -139,10 +139,11 @@ docker compose logs -f
 | Comando | Descrizione |
 |---------|-------------|
 | `/start` | Benvenuto e guida |
-| `/offri` | Fai un'offerta su un'asta aperta |
+| `/offri` | Lista aste aperte con bottoni deep link — clicca per offrire subito, i bottoni non scadono mai |
 | `/nuova_fa <giocatore>` | Apri asta FA |
-| `/lista_fa` | Lista giocatori FA disponibili |
+| `/lista_fa` | Lista giocatori FA disponibili — clicca per aprire subito l'asta |
 | `/aste` | Aste in corso |
+| `/list` | Lista asciutta squadre con ID e GM (solo admin) |
 | `/listteams` | Squadre e cap |
 | `/watched` | Aste che stai seguendo |
 | `/me` | Tua situazione cap e slot |
@@ -167,8 +168,9 @@ docker compose logs -f
 | `/set_cap_penalizzato <team_id> <valore>` | Imposta penalità cap |
 | `/set_fase <offseason\|regular>` | Cambia fase e scala cap |
 | `/apri_mercato` / `/chiudi_mercato` | Gestisce mercato FA |
+| `/list` | Lista asciutta squadre con ID e GM (solo admin) |
 | `/listteams` | Lista squadre con ID e cap virtuale |
-| `/team <team_id>` | Situazione cap/slot dettagliata di una squadra (come `/me`, per admin) |
+| `/team <team_id>` | Situazione cap/slot dettagliata di una squadra (tutti) |
 | `/all_aste [stato]` | Lista tutte le aste con filtro opzionale per stato |
 | `/riapri_asta <asta_id> [ore]` | Riporta asta CHIUSA/PAREGGIO/ANNULLATA ad APERTA (conferma se ANNULLATA) |
 | `/ripubblica_asta <asta_id>` | Ripubblica il messaggio canale di un'asta se cancellato per errore |

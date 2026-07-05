@@ -77,6 +77,7 @@ def _migrate():
         "ALTER TABLE aste ADD COLUMN firmato_at TEXT",
         "ALTER TABLE aste ADD COLUMN stagione TEXT",
         "ALTER TABLE aste ADD COLUMN notifica_15min INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE aste ADD COLUMN pareggio_preimpostato TEXT",  # JSON {importo, anni}
     ]
     with get_conn() as conn:
         for sql in migrazioni:
@@ -482,3 +483,31 @@ def riapri_asta(asta_id: int, nuova_scadenza: str):
             """,
             (nuova_scadenza, asta_id),
         )
+
+def set_pareggio_preimpostato(asta_id: int, importo: int, anni: int):
+    """Salva il pre-pareggio del proprietario RFA."""
+    import json
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE aste SET pareggio_preimpostato=? WHERE id=?",
+            (json.dumps({"importo": importo, "anni": anni}), asta_id),
+        )
+
+def clear_pareggio_preimpostato(asta_id: int):
+    """Cancella il pre-pareggio."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE aste SET pareggio_preimpostato=NULL WHERE id=?",
+            (asta_id,),
+        )
+
+def get_pareggio_preimpostato(asta_id: int) -> dict | None:
+    """Restituisce il pre-pareggio se presente, altrimenti None."""
+    import json
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT pareggio_preimpostato FROM aste WHERE id=?", (asta_id,)
+        ).fetchone()
+        if row and row[0]:
+            return json.loads(row[0])
+        return None

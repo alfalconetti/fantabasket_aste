@@ -44,6 +44,8 @@ async def dev_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/dev_firme [N] — ultime N firme concluse (default 10)\n"
         "/dev_cap — cap e slot virtuali con aste che li occupano\n"
         "/dev_log [N] — ultime N righe di log in memoria (default 30)\n"
+        "/broadcast &lt;testo&gt; — manda messaggio a tutti i GM\n"
+
         "/job_status — job attivi nella JobQueue\n"
     )
     await update.effective_message.reply_text(testo, parse_mode="HTML")
@@ -169,7 +171,7 @@ async def dev_firme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for f in firme:
         righe.append(
             f"#{f['id']} <b>{f['giocatore']}</b> → {f['offerente_team_id']}\n"
-            f"  💰 {f['offerta_corrente']}M × {f['anni_offerti']} anni — "
+            f"  💰 {f['offerta_corrente']}M × {f['anni_contratto']} anni — "
             f"{utils.format_dt(f['conclusa_at'])}"
         )
 
@@ -301,6 +303,115 @@ async def job_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
 
 
+# ── /broadcast ────────────────────────────────────────────────────────────────
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Manda un messaggio in privata a tutti i gm_ids di tutti i team.
+    Logga i falliti sul canale log (probabilmente non hanno mai avviato il bot).
+    Solo dev. Uso: /broadcast <testo>
+    """
+    if not is_dev(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text(
+            "Uso: /broadcast &lt;testo&gt;\n"
+            "Esempio: /broadcast Ciao! La FA inizia lunedì, manda /start al bot se non l'hai ancora fatto.",
+            parse_mode="HTML",
+        )
+        return
+
+    testo = " ".join(context.args)
+    tutti_team = tm.get_all_teams()
+
+    ok = 0
+    fail = 0
+    falliti = []
+    già_contattati = set()
+
+    for team in tutti_team:
+        for gm_id in team.get("gm_ids", []):
+            if gm_id in già_contattati:
+                continue
+            già_contattati.add(gm_id)
+            try:
+                await context.bot.send_message(chat_id=gm_id, text=testo, parse_mode="HTML")
+                ok += 1
+            except Exception as e:
+                fail += 1
+                falliti.append(f"  • {team['nome']} (id {gm_id}): {e}")
+                logger.warning("broadcast fallito per %d: %s", gm_id, e)
+
+    # riepilogo sul canale log
+    riepilogo = (
+        f"📢 <b>Broadcast completato</b>\n"
+        f"✅ Inviati: {ok}\n"
+        f"❌ Falliti: {fail}"
+    )
+    if falliti:
+        riepilogo += "\n\n<b>Falliti (non hanno avviato il bot):</b>\n" + "\n".join(falliti)
+
+    log_channel_id = utils.get_log_channel_id()
+    if log_channel_id:
+        try:
+            await context.bot.send_message(chat_id=log_channel_id, text=riepilogo, parse_mode="HTML")
+        except Exception as e:
+            logger.warning("Invio riepilogo broadcast al canale log fallito: %s", e)
+
+    await update.effective_message.reply_text(riepilogo, parse_mode="HTML")
+
+
+async def cmd_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Offerta one-shot senza ConversationHandler.
+    Uso: /offerta asta <asta_id> <importo>
+    La parola 'asta' è necessaria per evitare ambiguità tra i due numeri.
+    Tutti i check vengono applicati (cap, slot, stato asta, ecc.).
+    Nessun retry — se va male, amen.
+    Solo dev.
+    """
+    if not is_dev(update.effective_user.id):
+        return
+
+    if len(context.args) != 3 or context.args[0].lower() != "asta":
+        await update.effective_message.reply_text(
+            "Uso: /offerta asta &lt;asta_id&gt; &lt;importo&gt;\n"
+            "Esempio: /offerta asta 42 25",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        asta_id = int(context.args[1])
+        importo = int(context.args[2])
+    except ValueError:
+        await update.effective_message.reply_text("❌ asta_id e importo devono essere interi.")
+        return
+
+    team = tm.get_team_by_gm(update.effective_user.id)
+    if not team:
+        await update.effective_message.reply_text("❌ Non sei registrato come GM.")
+        return
+
+    asta = db.get_asta(asta_id)
+    if not asta or asta["stato"] != "APERTA":
+        await update.effective_message.reply_text("❌ Asta non trovata o non aperta.")
+        return
+
+    from handlers.offerte import _esegui_offerta
+    errore = await _esegui_offerta(context, team, asta_id, importo, update.effective_user.id)
+    if errore:
+        await update.effective_message.reply_text(f"❌ {errore}")
+    else:
+        asta_upd = db.get_asta(asta_id)
+        await update.effective_message.reply_text(
+            f"✅ Offerta di <b>{importo}M</b> per <b>{asta['giocatore']}</b> registrata.\n"
+            f"Scade: {utils.format_dt(asta_upd['scade_at'])}",
+            parse_mode="HTML",
+        )
+
+
 # ── handlers ──────────────────────────────────────────────────────────────────
 
 def get_handlers():
@@ -314,4 +425,5 @@ def get_handlers():
         CommandHandler("dev_cap",        dev_cap),
         CommandHandler("dev_log",        dev_log),
         CommandHandler("job_status",     job_status),
+        CommandHandler("broadcast",      broadcast),
     ]

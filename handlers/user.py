@@ -118,7 +118,6 @@ async def cmd_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
 
     asta_id = int(query.data.split(":")[1])
     gm_id = query.from_user.id
@@ -130,8 +129,7 @@ async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     asta = db.get_asta(asta_id)
     if db.is_watching(asta_id, gm_id):
-        db.remove_watch(asta_id, gm_id)
-        await query.answer("🔕 Non segui più questa asta.", show_alert=True)
+        await query.answer("🔔 Stai già seguendo questa asta.\nUsa /silenzia per smettere.", show_alert=True)
     else:
         db.add_watch(asta_id, gm_id)
         if asta:
@@ -270,9 +268,77 @@ async def cmd_silenzia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(f"🔕 Non riceverai più notifiche per <b>{nome}</b>.", parse_mode="HTML")
 
 
+async def cmd_guida(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manda la guida GM in privata come documento .md."""
+    import os
+    path = os.path.join(os.path.dirname(__file__), "..", "docs", "guida_gm.md")
+    path = os.path.normpath(path)
+    try:
+        with open(path, "rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_user.id,
+                document=f,
+                filename="guida_gm.md",
+                caption="📖 Guida per i GM",
+            )
+    except Exception as e:
+        await update.effective_message.reply_text(f"❌ Errore nell'invio della guida: {e}")
+
+
+async def cmd_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Offerta one-shot senza ConversationHandler.
+    Uso: /offerta asta <asta_id> <importo>
+    La parola 'asta' è necessaria per evitare ambiguità tra i due numeri.
+    Tutti i check vengono applicati (cap, slot, stato asta, ecc.).
+    Nessun retry — se l'offerta non è valida, messaggio di errore e fine.
+    Utile per programmare offerte con lo scheduling messaggi di Telegram.
+    """
+    team = tm.get_team_by_gm(update.effective_user.id)
+    if not team:
+        await update.effective_message.reply_text("⛔ Non sei registrato come GM.")
+        return
+
+    if len(context.args) != 3 or context.args[0].lower() != "asta":
+        await update.effective_message.reply_text(
+            "Uso: /offerta asta &lt;asta_id&gt; &lt;importo&gt;\n"
+            "Esempio: /offerta asta 42 25",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        asta_id = int(context.args[1])
+        importo = int(context.args[2])
+    except ValueError:
+        await update.effective_message.reply_text(
+            "❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso."
+        )
+        return
+
+    asta = db.get_asta(asta_id)
+    if not asta or asta["stato"] != "APERTA":
+        await update.effective_message.reply_text("❌ Asta non trovata o non aperta.")
+        return
+
+    from handlers.offerte import _esegui_offerta
+    errore = await _esegui_offerta(context, team, asta_id, importo, update.effective_user.id)
+    if errore:
+        await update.effective_message.reply_text(f"❌ {errore}", parse_mode="HTML")
+    else:
+        asta_upd = db.get_asta(asta_id)
+        await update.effective_message.reply_text(
+            f"✅ Offerta di <b>{importo}M</b> per <b>{asta['giocatore']}</b> registrata.\n"
+            f"Scade: {utils.format_dt(asta_upd['scade_at'])}",
+            parse_mode="HTML",
+        )
+
+
 def get_handlers():
     return [
         CommandHandler("me",       cmd_me),
+        CommandHandler("guida",    cmd_guida),
+        CommandHandler("offerta",  cmd_offerta),
         CommandHandler("autocap",   _autocap_from_user),
         CommandHandler("autoslot",   _auto_slot_from_user),
         CommandHandler("silenzia",    cmd_silenzia),

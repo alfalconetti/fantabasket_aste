@@ -299,16 +299,11 @@ Comandi riservati al solo `dev_id` (non visibili in /admin), per osservare lo st
 - Aggiunta `preview_annulla_ultima_offerta` in `database.py`: simula l'annullamento senza modificare il DB, usata per il check preventivo
 - `BOT_VERSION` aggiornato a v30
 
-## v31 — Apertura asta FA direttamente da /lista_fa
-
-- Cliccando un giocatore in `/lista_fa` ora appare un bottone "🏀 Apri asta per X" che porta direttamente al flusso di offerta tramite deep link, senza dover scrivere `/nuova_fa <nome>`
-- Aggiunto ramo `nuova_fa_<nome>` in `start_deep_link`: il nome viene decodificato (underscore → spazio), verificato nella lista FA e usato direttamente come entry point per `NUOVA_FA_IMPORTO`, saltando tutta la fase di ricerca fuzzy
-- I controlli esistenti (mercato aperto, asta già in corso, GM registrato) vengono eseguiti sia nel callback che nel deep link
-
 ## v31 — /lista_fa con apertura diretta asta
 
 - `/lista_fa` ora usa bottoni con deep link diretti invece di callback — cliccando un giocatore si apre subito il flusso di offerta in privata col bot senza dover scrivere nulla
-- Il testo della keyboard aggiornato da "Clicca per avviare asta" a "Clicca per aprire subito l'asta"
+- Aggiunto ramo `nuova_fa_<nome>` in `start_deep_link`: il nome viene decodificato (underscore → spazio), verificato nella lista FA e usato direttamente come entry point per `NUOVA_FA_IMPORTO`
+- I controlli esistenti (mercato aperto, asta già in corso, GM registrato) vengono eseguiti nel deep link
 - `lista_fa_avvia_callback` mantenuto come fallback per vecchi messaggi già inviati prima dell'aggiornamento
 - `BOT_VERSION` aggiornato a v31
 
@@ -319,3 +314,90 @@ Comandi riservati al solo `dev_id` (non visibili in /admin), per osservare lo st
 - Rilancio su asta esistente (deep link da bottone 🏀 nel canale): se cap libero < offerta corrente + rilancio minimo → messaggio con cap disponibile e minimo necessario, e fine conversazione
 - Aggiunto helper `_cap_libero(team_id)` in `offerte.py` per calcolo pulito del cap effettivo
 - `BOT_VERSION` aggiornato a v32
+
+## v33 — Check cap ex ante su /offri e uscita immediata se cap insufficiente
+
+- Aggiunto check cap in `asta_scelta_callback` (/offri): se il cap libero è inferiore al minimo necessario per rilanciare, il bot esce subito con messaggio chiaro invece di chiedere l'importo (lo stesso check già presente per il bottone 🏀 nel canale)
+- Fix `inserisci_importo`: se l'errore è "cap insufficiente" e il GM non ha cap sufficiente per fare nemmeno l'offerta minima su quell'asta, il bot esce con `ConversationHandler.END` invece di restare in `INSERISCI_IMPORTO` chiedendo di reinserire
+- Aggiunto check slot in `asta_scelta_callback` e in `start_deep_link`: se non ci sono slot liberi il bot esce subito con messaggio chiaro
+- `BOT_VERSION` aggiornato a v33
+
+## v34 — Refactoring /offri: no timeout, bottoni deep link
+
+- `/offri` rimosso dal ConversationHandler — diventa un semplice comando che manda la lista aste con bottoni deep link. I bottoni non scadono mai (erano soggetti al timeout di 5 minuti del ConversationHandler)
+- Paginazione di `/offri` gestita da `offri_pagina_callback`, handler globale con pattern `offri_page:N` — non scade mai
+- I bottoni delle aste in `/offri` usano ora deep link `start=offri_<asta_id>` come il bottone 🏀 nel canale — il flusso di offerta passa sempre da `start_deep_link` che ha già tutti i check
+- Aggiunto `_check_partecipazione(team, asta)` — helper condiviso che unifica i check cap+slot+RFA sia per `/offri` che per il deep link canale, evitando duplicazioni
+- `asta_scelta_callback` rimosso (non più necessario — i bottoni sono deep link)
+- Testo di `/start` ripristinato identico alla v33 (era stato modificato per errore)
+- `BOT_VERSION` aggiornato a v34
+
+## v35 — /guida, /guida_admin, /broadcast
+
+- `/guida` — manda `docs/guida_gm.md` in privata come documento, disponibile a tutti i GM
+- `/guida_admin` solo admin — manda `docs/guida_admin.md` in privata come documento
+- `/broadcast <testo>` solo dev — manda un messaggio in privata a tutti i gm_ids di tutti i team. Logga i falliti sul canale log (chi non ha mai avviato il bot). Utile prima della FA per assicurarsi che tutti abbiano attivato il bot
+- `BOT_VERSION` aggiornato a v35
+
+## v36 — Recovery robusto, nuovi comandi e check cap stagionale
+
+### Bug fix critici
+- `recupera_stati_pendenti`: ora rischedulia `firma_automatica` e `pareggio_automatico` con il tempo residuo corretto dopo un riavvio — se mancano 10h alla firma automatica, viene schedulato tra 10h, non tra 48h dall'inizio. Se il timeout è già scaduto durante il downtime, viene eseguito entro 5 secondi dal riavvio
+- `dev_firme`: usa `anni_contratto` invece di `anni_offerti` — il campo corretto che contiene gli anni effettivamente firmati
+
+### Nuovi comandi dev
+- `/offerta asta <asta_id> <importo>` — offerta one-shot senza ConversationHandler. Tutti i check applicati (cap, slot, stato asta, offerta minima/massima). Nessun retry: se va male, messaggio di errore e fine. Utile per offerte programmate con lo scheduling messaggi Telegram
+- `/offerta` aggiunto al testo di `/dev`
+
+### Nuovi comandi admin
+- `/crea_offerta <team_id> <asta_id> <importo>` — stessa logica di `/offerta` ma per conto di un team specifico. Logga l'azione sul canale log con nome admin
+- `/firme [N]` — ultime N firme concluse con nome squadra (invece di team_id) e anni_contratto (default 10, max 50)
+
+### Job giornaliero check cap stagionale (ore 13:00)
+- Ogni giorno alle 13 controlla che `Σ cap_liberi ≥ numero_teams × (cap_offseason - cap_regular) + Σ cap_penalizzati`
+- Manda il risultato sul canale log con margine positivo ✅ o avviso ⚠️ se insufficiente
+- Nuova chiave `numero_teams` in `settings.json` (aggiungere: 24 per questa lega)
+- Validazione all'avvio: se `numero_teams` in settings non corrisponde al numero di squadre in `teams.json`, viene loggato un warning
+
+### Fix vari
+- "Message is not modified" → `ℹ️ Messaggio canale già aggiornato` invece di "⚠️ Errore di rete"
+- `/guida_admin` spostata nella sezione 🏟️ Lega in `/admin`
+- `&lt;testo&gt;` escaped correttamente nel testo di `/dev`
+- `/admin` aggiunto al testo di `/start` (per non-admin dice non autorizzato)
+- `/dev` aggiunto al testo di `/admin` (per non-dev dice non autorizzato)
+- Nome repo GitHub corretto: `fantabasket_aste` (underscore) in scheduler.py, docs, README
+- `BOT_VERSION` aggiornato a v36
+
+## v37 — Fix job duplicati al riavvio e annuncio crea_offerta
+
+### Fix job duplicati
+- `chiedi_anni` e `_chiedi_pareggio` ora accettano parametro `schedula_job=True`. Nel recovery (`recupera_stati_pendenti`) vengono chiamati con `schedula_job=False` — mandano solo il messaggio al GM senza schedulare un secondo job. Il recovery schedula già il job con il tempo residuo corretto. Risultato: nessun job duplicato dopo il riavvio
+- Rimosso `return` doppio in `firma_automatica` (residuo di un edit precedente, innocuo ma brutto)
+
+### /crea_offerta
+- Aggiunto annuncio nel canale aste con nome admin e dettagli dell'offerta: "🔧 Offerta registrata da X per conto di Team: YM su Giocatore"
+- `BOT_VERSION` aggiornato a v37
+
+## v38 — Pre-pareggio RFA e fix timer pareggio
+
+### Fix timer pareggio
+- Il timer `pareggio_automatico` ora parte da `conclusa_at + 24h` invece che dall'ora in cui il vincitore sceglie gli anni. Questo rispetta le regole: il proprietario ha 24h dalla fine dell'asta, non dal momento in cui riceve l'offerta completa
+
+### Notifica proprietario alla chiusura RFA
+- Alla chiusura dell'asta il proprietario riceve subito un messaggio con: importo del vincitore, scadenza esatta del pareggio (conclusa_at + 24h), avviso fascia se l'offerta è sotto soglia (min_importo da pareggiare), informazione che il vincitore ha 12h per scegliere gli anni
+
+### Pre-pareggio RFA
+- Nuova colonna DB `pareggio_preimpostato` (JSON) — migrazione automatica
+- Il proprietario può pre-impostare il pareggio mentre aspetta la scelta anni del vincitore, tramite bottone "⚡ Pre-imposta pareggio" nel messaggio di chiusura
+- Il bot calcola automaticamente l'importo corretto (offrire la soglia minima se sotto fascia)
+- Dopo l'impostazione: bottoni "✏️ Modifica" e "❌ Annulla" fino a quando il vincitore non sceglie
+- Quando il vincitore sceglie gli anni (o dopo 12h automatiche): se anni vincitore ≤ anni pre-impostati → pareggio automatico istantaneo; altrimenti chiede normalmente al proprietario
+- `BOT_VERSION` aggiornato a v38
+
+## v39 — /listteams per tutti, /list admin, /team per tutti
+
+- `/listteams` ora disponibile a tutti i GM con formato migliorato: cap disponibile, cap libero (al netto delle aste in corso), slot occupati/totali/liberi, spazio tra le squadre
+- `/list` nuovo comando solo admin — specchio del teams.json con ID, GM, gm_ids, cap, slot, penalità
+- `/team <team_id>` ora disponibile a tutti i GM (non più solo admin) — rimosso testo "vista admin"
+- `/team` e `/listteams` aggiunti al testo di `/start`
+- `BOT_VERSION` aggiornato a v39

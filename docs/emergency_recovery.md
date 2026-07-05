@@ -23,8 +23,8 @@ Vai sul canale log o nel gruppo admin e scarica l'ultimo zip di backup. Contiene
 
 ### 2. Clona la repo
 ```bash
-git clone https://github.com/alfalconetti/fantabasket-aste.git
-cd fantabasket-aste
+git clone https://github.com/alfalconetti/fantabasket_aste.git
+cd fantabasket_aste
 ```
 
 ### 3. Estrai il backup
@@ -101,18 +101,18 @@ Quando il server principale torna disponibile, sposta tutto lì e spegni il bot 
 
 ### 1. Esporta il DB aggiornato dal computer di emergenza
 ```bash
-cd fantabasket-aste
+cd fantabasket_aste
 zip -r backup_emergency.zip data/aste.db config/
 ```
 
 ### 2. Trasferisci sull'M910q
 ```bash
-scp backup_emergency.zip user@indirizzo-server:~/bots/fantabasket-aste/
+scp backup_emergency.zip user@indirizzo-server:~/bots/fantabasket_aste/
 ```
 
 ### 3. Sul server principale
 ```bash
-cd ~/bots/fantabasket-aste
+cd ~/bots/fantabasket_aste
 unzip -o backup_emergency.zip
 docker compose restart
 ```

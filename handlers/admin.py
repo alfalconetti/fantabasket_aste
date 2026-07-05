@@ -138,18 +138,43 @@ async def nuova_rfa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── /listteams ────────────────────────────────────────────────────────────────
 
 async def listteams(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lista squadre con cap e slot — disponibile a tutti."""
+    s = settings.get()
+    cap_totale = s.get("cap_offseason", 165)
+    slot_totale = s.get("slot_massimo", 15)
 
     all_teams = tm.get_all_teams()
-    righe = ["<b>Squadre registrate:</b>\n"]
+    righe = ["<b>🏀 Squadre</b>\n"]
     for t in all_teams:
-        cap_virt = db.get_cap_virtuale(t['id'])
-        slot_virt = db.get_slot_virtuali(t['id'])
+        cap_virt     = db.get_cap_virtuale(t["id"])
+        slot_virt    = db.get_slot_virtuali(t["id"])
+        cap_disp     = t["cap_disponibile"]
+        slot_disp    = t["slot_disponibili"]
+        cap_impegnati_contratti = cap_totale - cap_disp
+        slot_impegnati_contratti = slot_totale - slot_disp
+        cap_libero   = cap_disp - cap_virt
+        slot_liberi  = slot_disp - slot_virt
+
         righe.append(
-            f"• <b>{t['nome']}</b>\n"
-            f"  ID: <code>{t['id']}</code>  "
-            f"Cap: {t['cap_disponibile']}M (libero: {t['cap_disponibile']-cap_virt}M)  "
-            f"Slot: {t['slot_disponibili']} (liberi: {t['slot_disponibili']-slot_virt})"
+            f"<b>{t['nome']}</b> — <code>{t['id']}</code>\n"
+            f"💰 {cap_impegnati_contratti}M impegnati ({cap_totale}-{cap_disp}) | {cap_disp}M disponibili | {cap_libero}M liberi\n"
+            f"🪑 {slot_impegnati_contratti} impegnati ({slot_totale}-{slot_disp}) | {slot_disp} disponibili | {slot_liberi} liberi\n"
         )
+
+    await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
+
+
+async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lista asciutta nome/id/gm — solo admin."""
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    all_teams = tm.get_all_teams()
+    righe = ["<b>📋 Squadre</b>\n"]
+    for t in all_teams:
+        gm_nome = t.get("gm_nome", "—")
+        righe.append(f"<b>{t['nome']}</b> — <code>{t['id']}</code> — {gm_nome}")
 
     await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
 
@@ -1136,13 +1161,9 @@ async def auto_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Mostra la situazione completa di una squadra, identica a /me ma per qualsiasi team.
-    Solo admin. Uso: /team <team_id>
+    Mostra la situazione completa di una squadra.
+    Disponibile a tutti. Uso: /team <team_id>
     """
-    if not is_admin(update.effective_user.id):
-        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
-        return
-
     if not context.args:
         await update.effective_message.reply_text(
             "Uso: /team &lt;team_id&gt;\n"
@@ -1174,7 +1195,7 @@ async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = settings.get()
 
     righe = [
-        f"🏀 <b>{team['nome']}</b> — vista admin",
+        f"🏀 <b>{team['nome']}</b>",
         f"<i>ID: <code>{team_id}</code></i>",
         "",
         f"💰 Cap disponibile (offseason): <b>{cap_tot}M</b>",
@@ -1929,6 +1950,143 @@ async def annulla_off_cap_callback(update: Update, context: ContextTypes.DEFAULT
     logger.info("annulla_off_cap_callback: asta_id=%d admin=%d", asta_id, query.from_user.id)
 
 
+async def guida_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manda la guida admin in privata come documento .md. Solo admin."""
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+    import os
+    path = os.path.join(os.path.dirname(__file__), "..", "docs", "guida_admin.md")
+    path = os.path.normpath(path)
+    try:
+        with open(path, "rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_user.id,
+                document=f,
+                filename="guida_admin.md",
+                caption="📖 Guida admin",
+            )
+    except Exception as e:
+        await update.effective_message.reply_text(f"❌ Errore nell'invio della guida: {e}")
+
+
+# ── /crea_offerta ─────────────────────────────────────────────────────────────
+
+async def crea_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Offerta one-shot per conto di un team specifico, senza ConversationHandler.
+    Solo admin. Uso: /crea_offerta <team_id> <asta_id> <importo>
+    Tutti i check vengono applicati. Nessun retry.
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if len(context.args) != 3:
+        await update.effective_message.reply_text(
+            "Uso: /crea_offerta &lt;team_id&gt; &lt;asta_id&gt; &lt;importo&gt;\n"
+            "Esempio: /crea_offerta bulls 42 25",
+            parse_mode="HTML",
+        )
+        return
+
+    team_id = context.args[0]
+    try:
+        asta_id = int(context.args[1])
+        importo = int(context.args[2])
+    except ValueError:
+        await update.effective_message.reply_text(
+            "❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso."
+        )
+        return
+
+    team = tm.get_team_by_id(team_id)
+    if not team:
+        await update.effective_message.reply_text(
+            f"❌ Team '<code>{team_id}</code>' non trovato. Usa /listteams per la lista.",
+            parse_mode="HTML",
+        )
+        return
+
+    asta = db.get_asta(asta_id)
+    if not asta or asta["stato"] != "APERTA":
+        await update.effective_message.reply_text(
+            "❌ Serve l'ID numerico dell'asta. Usa /aste per vedere gli ID in corso."
+        )
+        return
+
+    admin_label = _admin_label(update.effective_user)
+    from handlers.offerte import _esegui_offerta
+    gm_id = team["gm_ids"][0] if team["gm_ids"] else 0
+    errore = await _esegui_offerta(context, team, asta_id, importo, gm_id)
+    if errore:
+        await update.effective_message.reply_text(f"❌ {errore}")
+    else:
+        asta_upd = db.get_asta(asta_id)
+        await update.effective_message.reply_text(
+            f"✅ Offerta di <b>{importo}M</b> per <b>{asta['giocatore']}</b> "
+            f"registrata per <b>{team['nome']}</b>.\n"
+            f"Scade: {utils.format_dt(asta_upd['scade_at'])}",
+            parse_mode="HTML",
+        )
+        channel_id = utils.get_channel_id()
+        try:
+            await context.bot.send_message(
+                chat_id=channel_id,
+                text=(
+                    f"🔧 Offerta registrata da <b>{admin_label}</b> per conto di <b>{team['nome']}</b>:\n"
+                    f"<b>{importo}M</b> su <b>{asta['giocatore']}</b>"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            await _log_warn(context, f"Annuncio crea_offerta canale fallito: {e}")
+        await _log_warn(context,
+            f"🏀 Offerta creata da admin <b>{admin_label}</b>: "
+            f"{team['nome']} → {asta['giocatore']} {importo}M"
+        )
+    logger.info("crea_offerta: team=%s asta_id=%d importo=%d admin=%d",
+                team_id, asta_id, importo, update.effective_user.id)
+
+
+# ── /firme ────────────────────────────────────────────────────────────────────
+
+async def cmd_firme(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Ultime N firme concluse con nome squadra invece di team_id.
+    Solo admin. Uso: /firme [N] (default 10)
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    try:
+        n = int(context.args[0]) if context.args else 10
+        if n <= 0 or n > 50:
+            raise ValueError
+    except ValueError:
+        await update.effective_message.reply_text("❌ N deve essere un intero tra 1 e 50.")
+        return
+
+    firme = db.get_ultime_firme(n)
+    if not firme:
+        await update.effective_message.reply_text("Nessuna firma conclusa nel DB.")
+        return
+
+    teams_map_dict = {t["id"]: t["nome"] for t in tm.get_all_teams()}
+    righe = [f"✍️ <b>Ultime {len(firme)} firme</b>", ""]
+    for f in firme:
+        team_nome = teams_map_dict.get(f["offerente_team_id"], f["offerente_team_id"])
+        anni = f["anni_contratto"] or "?"
+        righe.append(
+            f"#{f['id']} <b>{f['giocatore']}</b> → {team_nome}\n"
+            f"  💰 {f['offerta_corrente']}M × {anni} anni — "
+            f"{utils.format_dt(f['conclusa_at'])}"
+        )
+
+    await update.effective_message.reply_text("\n".join(righe), parse_mode="HTML")
+
+
 # ── /admin ────────────────────────────────────────────────────────────────────
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1946,6 +2104,8 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/chiudi_asta &lt;asta_id&gt; — chiude forzatamente un'asta\n"
         "/annulla_asta &lt;asta_id&gt; — annulla un'asta\n"
         "/annulla_offerta &lt;asta_id&gt; — annulla ultima offerta\n"
+        "/crea_offerta &lt;team_id&gt; &lt;asta_id&gt; &lt;importo&gt; — offerta one-shot per conto di un team\n"
+        "/firme [N] — ultime N firme con nome squadra (default 10)\n"
         "/estendi_asta &lt;asta_id&gt; &lt;ore&gt; — sposta la scadenza in avanti di N ore\n"
         "/sposta_asta &lt;asta_id&gt; &lt;YYYY-MM-DDTHH:MM&gt; — imposta scadenza precisa (ora di Roma)\n"
         "/riapri_asta &lt;asta_id&gt; [ore] — riporta asta CHIUSA/PAREGGIO/ANNULLATA ad APERTA (conferma se ANNULLATA)\n"
@@ -1962,8 +2122,10 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/apri_mercato — apre il mercato FA\n"
         "/chiudi_mercato — chiude il mercato FA\n"
         "/set_fase &lt;offseason|regular&gt; — cambia fase e scala cap\n"
-        "/listteams — lista squadre con ID e cap\n"
-        "/team &lt;team_id&gt; — situazione cap e slot di una squadra\n"
+        "/listteams — lista squadre con cap e slot (tutti)\n"
+        "/list — specchio del teams.json con IDs e GM (admin)\n"
+        "/guida_admin — ricevi la guida admin in privata\n"
+        "/team &lt;team_id&gt; — situazione cap e slot di una squadra (tutti)\n"
         "\n"
         "<b>🔧 Recovery ed emergenza</b>\n"
         "/ripubblica_asta &lt;asta_id&gt; — ripubblica il messaggio canale se cancellato per errore\n"
@@ -1972,7 +2134,8 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>🔍 Diagnostica</b>\n"
         "/stato_asta &lt;asta_id&gt; — dump completo del record DB di un'asta\n"
         "\n"
-        "/admin — questo messaggio"
+        "/admin — questo messaggio\n"
+        "/dev — comandi dev (solo dev)"
     )
     await update.effective_message.reply_text(testo, parse_mode="HTML")
 
@@ -1982,6 +2145,7 @@ def get_handlers():
         CommandHandler("nuova_rfa",        nuova_rfa),
         CommandHandler("team",             cmd_team),
         CommandHandler("listteams",        listteams),
+        CommandHandler("list",              cmd_list),
         CommandHandler("set_cap",          set_cap),
         CommandHandler("set_slot",         set_slot),
         CommandHandler("apri_mercato",     apri_mercato),
@@ -1992,6 +2156,9 @@ def get_handlers():
         CommandHandler("annulla_asta",     annulla_asta),
         CommandHandler("reset_rfa",            reset_rfa),
         CommandHandler("set_cap_penalizzato",   set_cap_penalizzato),
+        CommandHandler("guida_admin",           guida_admin),
+        CommandHandler("crea_offerta",          crea_offerta),
+        CommandHandler("firme",                 cmd_firme),
         CommandHandler("all_aste",              all_aste),
         CommandHandler("riapri_asta",           riapri_asta),
         CallbackQueryHandler(riapri_annullata_callback, pattern=r"^riapri_annullata:\d+:\d+$"),

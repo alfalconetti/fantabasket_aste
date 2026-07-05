@@ -19,7 +19,7 @@ Principio di responsabilità singola:
   - I chiamanti non devono mai chiamare libera_cap direttamente
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
@@ -83,7 +83,7 @@ async def _concludi_rfa_senza_contratto(context, asta_id: int):
 
 # ── chiedi anni al vincitore ──────────────────────────────────────────────────
 
-async def chiedi_anni(context: ContextTypes.DEFAULT_TYPE, asta_id: int):
+async def chiedi_anni(context: ContextTypes.DEFAULT_TYPE, asta_id: int, schedula_job: bool = True):
     asta = db.get_asta(asta_id)
     if not asta or not asta["offerente_team_id"]:
         if asta and asta["tipo"] == "RFA":
@@ -136,13 +136,204 @@ async def chiedi_anni(context: ContextTypes.DEFAULT_TYPE, asta_id: int):
         )
 
     timeout_h = settings.timeout_firma_rfa_ore() if is_rfa else settings.timeout_firma_fa_ore()
-    context.job_queue.run_once(
-        firma_automatica,
-        when=timeout_h * 3600,
-        data={"asta_id": asta_id},
-        name=f"firma_auto_{asta_id}",
+    if schedula_job:
+        context.job_queue.run_once(
+            firma_automatica,
+            when=timeout_h * 3600,
+            data={"asta_id": asta_id},
+            name=f"firma_auto_{asta_id}",
+        )
+    logger.info("chiedi_anni: asta_id=%d team=%s timeout=%dh schedula=%s", asta_id, team["id"], timeout_h, schedula_job)
+
+    # Per le RFA: notifica il proprietario alla chiusura con importo e scadenza
+    if is_rfa and asta["squadra_proprietaria"]:
+        await _notifica_proprietario_chiusura_rfa(context, asta_id)
+
+
+async def _notifica_proprietario_chiusura_rfa(context, asta_id: int):
+    """
+    Notifica il proprietario RFA alla chiusura dell'asta.
+    Mostra importo vincitore, scadenza pareggio (conclusa_at + 24h),
+    avviso fascia se sotto soglia, e bottone per pre-impostare il pareggio.
+    """
+    from datetime import timedelta
+    asta = db.get_asta(asta_id)
+    if not asta:
+        return
+    team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
+    if not team_prop:
+        return
+    team_vince = tm.get_team_by_id(asta["offerente_team_id"])
+    team_vince_nome = team_vince["nome"] if team_vince else "altra franchigia"
+
+    importo   = asta["offerta_corrente"]
+    vec_comp  = asta["vecchio_compenso"] or 0
+    conclusa_at = datetime.fromisoformat(asta["conclusa_at"])
+    scadenza_pareggio = conclusa_at + timedelta(hours=settings.timeout_pareggio_ore())
+    min_importo = importo_minimo_pareggio(importo, vec_comp)
+    sotto_soglia = importo < soglia_pareggio(vec_comp)
+
+    nota_fascia = ""
+    if vec_comp > 20 and sotto_soglia:
+        fraz = "1/3" if vec_comp <= 34 else "1/2"
+        nota_fascia = (
+            f"\n\n⚠️ <b>Attenzione fascia contrattuale</b>\n"
+            f"L'offerta ({importo}M) è inferiore a {fraz} del vecchio compenso ({vec_comp}M).\n"
+            f"Per pareggiare dovrai offrire almeno <b>{min_importo}M</b>.\n"
+            f"In questo caso gli anni sono <b>liberi</b> e non vincolati a quelli del vincitore."
+        )
+
+    ore_vincitore = settings.timeout_firma_rfa_ore()
+    testo = (
+        f"⚖️ <b>L'asta RFA per {asta['giocatore']} è terminata</b>\n\n"
+        f"<b>{team_vince_nome}</b> ha offerto: <b>{importo}M</b>\n"
+        f"Gli anni verranno comunicati entro {ore_vincitore}h.\n\n"
+        f"⏰ Hai tempo fino a <b>{utils.format_dt(scadenza_pareggio.isoformat())}</b> per decidere se pareggiare."
+        f"{nota_fascia}\n\n"
+        f"Puoi pre-impostare il pareggio ora — verrà eseguito automaticamente "
+        f"appena il vincitore sceglie gli anni, se compatibile."
     )
-    logger.info("chiedi_anni: asta_id=%d team=%s timeout=%dh", asta_id, team["id"], timeout_h)
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚡ Pre-imposta pareggio", callback_data=f"pre_par_anni:{asta_id}"),
+    ]])
+
+    for gm_id in team_prop["gm_ids"]:
+        try:
+            await context.bot.send_message(
+                chat_id=gm_id, text=testo, parse_mode="HTML", reply_markup=kb
+            )
+        except Exception as e:
+            await _log_warn(context, f"Notifica chiusura RFA proprietario {gm_id}: {e}")
+
+
+async def pre_pareggio_anni_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Il proprietario RFA clicca 'Pre-imposta pareggio'.
+    Chiede quanti anni vuole offrire (l'importo è già noto dalla DB).
+    """
+    query = update.callback_query
+    await query.answer()
+
+    asta_id = int(query.data.split(":")[1])
+    asta = db.get_asta(asta_id)
+    if not asta or asta["stato"] not in ("CHIUSA",):
+        await query.edit_message_text("❌ Asta non più disponibile per il pre-pareggio.")
+        return
+
+    team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
+    if not team_prop or query.from_user.id not in team_prop["gm_ids"]:
+        await query.answer("⛔ Non sei il proprietario di questo giocatore.", show_alert=True)
+        return
+
+    importo   = asta["offerta_corrente"]
+    vec_comp  = asta["vecchio_compenso"] or 0
+    min_importo = importo_minimo_pareggio(importo, vec_comp)
+    sotto_soglia = importo < soglia_pareggio(vec_comp)
+
+    s = settings.get()
+    # Anni minimi che il proprietario deve offrire
+    # Se sotto soglia: anni liberi (non vincolati al vincitore) — mostriamo tutti
+    # Se sopra soglia: deve offrire almeno gli anni del vincitore (non ancora noti) — mostriamo tutti
+    bottoni_anni = [
+        [InlineKeyboardButton(f"{a} ann{'o' if a==1 else 'i'}", callback_data=f"pre_par_set:{asta_id}:{a}")]
+        for a in [1, 2, 3]
+    ]
+    bottoni_anni.append([InlineKeyboardButton("❌ Annulla", callback_data=f"pre_par_annulla:{asta_id}")])
+
+    importo_label = f"{min_importo}M" if sotto_soglia else f"{importo}M"
+    nota = f"⚠️ Pareggerai a <b>{importo_label}</b>" + (" (soglia minima di fascia)" if sotto_soglia else "")
+
+    if sotto_soglia:
+        istruzioni = "Il pareggio scatterà automaticamente a prescindere dagli anni offerti dal vincitore — gli anni che scegli saranno quelli del tuo contratto."
+    else:
+        istruzioni = "Il pareggio scatterà automaticamente se il vincitore offre un numero di anni ≤ a quello che scegli."
+
+    await query.edit_message_text(
+        f"⚡ <b>Pre-pareggio per {asta['giocatore']}</b>\n\n"
+        f"{nota}\n\n"
+        f"Scegli per quanti anni vuoi pre-impostare il pareggio.\n"
+        f"<i>{istruzioni}</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(bottoni_anni),
+    )
+
+
+async def pre_pareggio_set_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Salva il pre-pareggio e aggiorna il messaggio con opzioni Modifica/Annulla."""
+    query = update.callback_query
+    await query.answer()
+
+    _, asta_id_s, anni_s = query.data.split(":")
+    asta_id = int(asta_id_s)
+    anni    = int(anni_s)
+
+    asta = db.get_asta(asta_id)
+    if not asta or asta["stato"] not in ("CHIUSA",):
+        await query.edit_message_text("❌ Asta non più disponibile.")
+        return
+
+    team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
+    if not team_prop or query.from_user.id not in team_prop["gm_ids"]:
+        await query.answer("⛔ Non sei il proprietario.", show_alert=True)
+        return
+
+    importo   = asta["offerta_corrente"]
+    vec_comp  = asta["vecchio_compenso"] or 0
+    min_importo = importo_minimo_pareggio(importo, vec_comp)
+    sotto_soglia = importo < soglia_pareggio(vec_comp)
+    importo_eff = min_importo if sotto_soglia else importo
+
+    db.set_pareggio_preimpostato(asta_id, importo_eff, anni)
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✏️ Modifica", callback_data=f"pre_par_anni:{asta_id}"),
+        InlineKeyboardButton("❌ Annulla pre-pareggio", callback_data=f"pre_par_annulla:{asta_id}"),
+    ]])
+
+    if sotto_soglia:
+        condizione = "<i>Il pareggio scatterà automaticamente a prescindere dagli anni offerti dal vincitore (gli anni sono liberi).</i>"
+    else:
+        condizione = f"<i>Il pareggio scatterà automaticamente se il vincitore offre ≤{anni} ann{'o' if anni==1 else 'i'}.</i>"
+
+    await query.edit_message_text(
+        f"⚡ <b>Pre-pareggio impostato per {asta['giocatore']}</b>\n\n"
+        f"💰 <b>{importo_eff}M × {anni} ann{'o' if anni==1 else 'i'}</b>\n\n"
+        f"{condizione}\n"
+        f"Puoi modificare o annullare fino a quando il vincitore non sceglie gli anni.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+async def pre_pareggio_annulla_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Annulla il pre-pareggio."""
+    query = update.callback_query
+    await query.answer()
+
+    asta_id = int(query.data.split(":")[1])
+    asta = db.get_asta(asta_id)
+    if not asta:
+        await query.edit_message_text("❌ Asta non trovata.")
+        return
+
+    team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
+    if not team_prop or query.from_user.id not in team_prop["gm_ids"]:
+        await query.answer("⛔ Non sei il proprietario.", show_alert=True)
+        return
+
+    db.clear_pareggio_preimpostato(asta_id)
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚡ Pre-imposta pareggio", callback_data=f"pre_par_anni:{asta_id}"),
+    ]])
+
+    await query.edit_message_text(
+        f"Pre-pareggio per <b>{asta['giocatore']}</b> annullato.\n\n"
+        f"Puoi reimpostarlo prima che il vincitore scelga gli anni.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
 
 
 # ── callback scelta anni vincitore ────────────────────────────────────────────
@@ -184,15 +375,67 @@ async def firma_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if asta["tipo"] == "FA":
         await _registra_firma_finale(context, asta_id, anni, team["id"], query=query)
     else:
-        # Salva prima nel DB, poi contatta proprietario, poi aggiorna canale
         db.set_anni_offerti(asta_id, anni)
-        await _chiedi_pareggio(context, asta_id, anni)
+        # Controlla pre-pareggio prima di chiedere al proprietario
+        eseguito = await _esegui_pre_pareggio_se_compatibile(context, asta_id, anni)
+        if not eseguito:
+            await _chiedi_pareggio(context, asta_id, anni)
         await _aggiorna_canale(context, asta_id)
+        msg_prop = "ricevuto il pareggio automatico." if eseguito else "24 ore per decidere se pareggiare l'offerta."
         await query.edit_message_text(
             f"✅ Anni registrati: <b>{anni}</b> per <b>{asta['giocatore']}</b> a <b>{asta['offerta_corrente']}M</b>.\n\n"
-            f"Il proprietario dei diritti ha 24 ore per decidere se pareggiare l'offerta.",
+            f"Il proprietario dei diritti ha {msg_prop}",
             parse_mode="HTML",
         )
+
+
+async def _esegui_pre_pareggio_se_compatibile(context, asta_id: int, anni_vincitore: int) -> bool:
+    """
+    Controlla se c'è un pre-pareggio impostato dal proprietario e se è compatibile
+    con gli anni offerti dal vincitore. Se sì, esegue il pareggio automaticamente.
+    Restituisce True se il pareggio è stato eseguito, False altrimenti.
+    """
+    pre = db.get_pareggio_preimpostato(asta_id)
+    if not pre:
+        return False
+
+    importo_pre = pre["importo"]
+    anni_pre    = pre["anni"]
+
+    asta = db.get_asta(asta_id)
+    vec_comp = asta["vecchio_compenso"] or 0
+    sotto_soglia = asta["offerta_corrente"] < soglia_pareggio(vec_comp) and vec_comp > 20
+
+    # Se sopra soglia: anni vincitore deve essere <= anni pre-impostati
+    # Se sotto soglia: gli anni sono liberi, il pre-pareggio scatta sempre
+    if not sotto_soglia and anni_vincitore > anni_pre:
+        logger.info("Pre-pareggio non compatibile: vincitore %d anni > pre %d anni", anni_vincitore, anni_pre)
+        db.clear_pareggio_preimpostato(asta_id)
+        return False
+    team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
+
+    logger.info("Pre-pareggio automatico: asta_id=%d importo=%d anni=%d", asta_id, importo_pre, anni_pre)
+    db.clear_pareggio_preimpostato(asta_id)
+
+    # Notifica il proprietario che il pareggio è scattato automaticamente
+    if team_prop:
+        for gm_id in team_prop["gm_ids"]:
+            try:
+                await context.bot.send_message(
+                    chat_id=gm_id,
+                    text=(
+                        f"⚡ <b>Pre-pareggio eseguito automaticamente!</b>\n\n"
+                        f"<b>{asta['giocatore']}</b>: hai pareggiato a <b>{importo_pre}M × {anni_pre} ann{'o' if anni_pre==1 else 'i'}</b>.\n"
+                        f"Il vincitore aveva offerto {anni_vincitore} ann{'o' if anni_vincitore==1 else 'i'}."
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                await _log_warn(context, f"Notifica pre-pareggio auto proprietario {gm_id}: {e}")
+
+    # Esegui il pareggio
+    await _registra_firma_finale(context, asta_id, anni_pre, asta["squadra_proprietaria"])
+    return True
 
 
 # ── firma automatica (timeout vincitore) ─────────────────────────────────────
@@ -208,7 +451,6 @@ async def firma_automatica(context: ContextTypes.DEFAULT_TYPE):
             anni = 3
             logger.info("Firma automatica FA (penale 3 anni): asta_id=%d", asta_id)
             await _registra_firma_finale(context, asta_id, anni, asta["offerente_team_id"])
-            return
             return
         else:
             anni = anni_minimi(asta["offerta_corrente"])
@@ -232,7 +474,10 @@ async def firma_automatica(context: ContextTypes.DEFAULT_TYPE):
                     except Exception as e:
                         await _log_warn(context, f"Notifica auto vincitore RFA fallita GM {gm_id}: {e}")
 
-        await _chiedi_pareggio(context, asta_id, anni)
+        # Controlla se c'è un pre-pareggio compatibile, altrimenti chiede al proprietario
+        eseguito = await _esegui_pre_pareggio_se_compatibile(context, asta_id, anni)
+        if not eseguito:
+            await _chiedi_pareggio(context, asta_id, anni)
     except Exception as e:
         from handlers.helpers import log_job_error
         await log_job_error(context, "firma_automatica", e)
@@ -240,7 +485,7 @@ async def firma_automatica(context: ContextTypes.DEFAULT_TYPE):
 
 # ── fase pareggio RFA ─────────────────────────────────────────────────────────
 
-async def _chiedi_pareggio(context, asta_id: int, anni_vincitore: int):
+async def _chiedi_pareggio(context, asta_id: int, anni_vincitore: int, schedula_job: bool = True):
     asta = db.get_asta(asta_id)
     team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
     if not team_prop:
@@ -273,8 +518,8 @@ async def _chiedi_pareggio(context, asta_id: int, anni_vincitore: int):
         f"<b>{team_vince_nome}</b> ha offerto: <b>{importo}M × {anni_vincitore} ann{'o' if anni_vincitore==1 else 'i'}</b>\n\n"
         f"Per pareggiare devi offrire:\n"
         f"  💰 Almeno <b>{min_importo}M</b>\n"
-        f"  📅 Almeno <b>{min_anni} ann{'o' if min_anni==1 else 'i'}</b>"
-        f"{nota_fascia}\n\n"
+        + (f"  📅 Almeno <b>{min_anni} ann{'o' if min_anni==1 else 'i'}</b>" if not sotto_soglia else f"  📅 Anni a tua scelta (non vincolati)")
+        + f"{nota_fascia}\n\n"
         f"Sei il proprietario dei diritti di <b>{asta['giocatore']}</b>.\n"
         f"Hai <b>24 ore</b> per decidere."
     )
@@ -296,13 +541,19 @@ async def _chiedi_pareggio(context, asta_id: int, anni_vincitore: int):
             f"(team: {team_prop['nome']}) per il pareggio. Intervenire manualmente."
         )
 
-    context.job_queue.run_once(
-        pareggio_automatico,
-        when=settings.timeout_pareggio_ore() * 3600,
-        data={"asta_id": asta_id},
-        name=f"pareggio_auto_{asta_id}",
-    )
-    logger.info("Fase pareggio avviata: asta_id=%d", asta_id)
+    if schedula_job:
+        # Il timer parte da conclusa_at + timeout, non dall'ora corrente
+        # Così rispetta le 24h dalle regole indipendentemente da quando il vincitore sceglie gli anni
+        conclusa_at = datetime.fromisoformat(asta["conclusa_at"])
+        scadenza = conclusa_at + timedelta(hours=settings.timeout_pareggio_ore())
+        residuo = max(5, (scadenza - datetime.now(timezone.utc)).total_seconds())
+        context.job_queue.run_once(
+            pareggio_automatico,
+            when=residuo,
+            data={"asta_id": asta_id},
+            name=f"pareggio_auto_{asta_id}",
+        )
+    logger.info("Fase pareggio avviata: asta_id=%d schedula=%s", asta_id, schedula_job)
 
 
 async def pareggio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -326,7 +577,7 @@ async def pareggio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         j.schedule_removal()
 
     if scelta == "indietro":
-        await _chiedi_pareggio(context, asta_id, asta["anni_offerti"])
+        await _chiedi_pareggio(context, asta_id, asta["anni_offerti"], schedula_job=False)
         await query.delete_message()
         return
 
@@ -707,10 +958,13 @@ def _valida_anni(importo: int, anni: int) -> str | None:
 
 def get_handlers():
     return [
-        CallbackQueryHandler(firma_callback,            pattern=r"^firma:\d+:\d+$"),
-        CallbackQueryHandler(pareggio_callback,         pattern=r"^pareggio:\d+:(si|no|indietro)$"),
-        CallbackQueryHandler(pareggio_anni_callback,    pattern=r"^pareggio_anni:\d+:\d+$"),
-        CallbackQueryHandler(firma_prop_callback,       pattern=r"^firma_prop:\d+$"),
-        CallbackQueryHandler(firma_prop_anni_callback,  pattern=r"^firma_prop_anni:\d+:\d+$"),
-        CallbackQueryHandler(lascia_callback,           pattern=r"^lascia:\d+$"),
+        CallbackQueryHandler(firma_callback,                pattern=r"^firma:\d+:\d+$"),
+        CallbackQueryHandler(pareggio_callback,             pattern=r"^pareggio:\d+:(si|no|indietro)$"),
+        CallbackQueryHandler(pareggio_anni_callback,        pattern=r"^pareggio_anni:\d+:\d+$"),
+        CallbackQueryHandler(firma_prop_callback,           pattern=r"^firma_prop:\d+$"),
+        CallbackQueryHandler(firma_prop_anni_callback,      pattern=r"^firma_prop_anni:\d+:\d+$"),
+        CallbackQueryHandler(lascia_callback,               pattern=r"^lascia:\d+$"),
+        CallbackQueryHandler(pre_pareggio_anni_callback,    pattern=r"^pre_par_anni:\d+$"),
+        CallbackQueryHandler(pre_pareggio_set_callback,     pattern=r"^pre_par_set:\d+:\d+$"),
+        CallbackQueryHandler(pre_pareggio_annulla_callback, pattern=r"^pre_par_annulla:\d+$"),
     ]

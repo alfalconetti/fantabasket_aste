@@ -66,3 +66,6 @@ def slot_massimo() -> int:
 
 def cap_massimo() -> int:
     return get()["cap_massimo"]
+
+def numero_teams() -> int:
+    return get()["numero_teams"]

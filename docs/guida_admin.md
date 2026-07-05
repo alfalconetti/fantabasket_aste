@@ -8,8 +8,12 @@
 
 ## Gestione squadre
 
+`/list` — lista asciutta di tutte le squadre con nome, ID e GM. Utile per trovare rapidamente un team_id.
+
 `/listteams` — lista squadre con ID cliccabile, cap totale, cap libero (virtuale) e slot liberi
-`/team <team_id>` — situazione completa di una singola squadra: cap totale, cap virtualmente impegnato, cap effettivamente libero, stima cap in regular season, slot, e tutte le offerte vincenti in corso. È la stessa vista che un GM ottiene con `/me`, ma per qualunque squadra. Utile per controlli puntuali senza dover scorrere `/listteams`.
+`/team <team_id>` — situazione completa di una singola squadra: cap totale, cap virtualmente impegnato, cap effettivamente libero, stima cap in regular season, slot, e tutte le offerte vincenti in corso. È la stessa vista che un GM ottiene con `/me`, ma per qualunque squadra. Utile per controlli puntuali senza dover scorrere `/list` — lista asciutta di tutte le squadre con nome, ID e GM. Utile per trovare rapidamente un team_id.
+
+`/listteams`.
 `/set_cap <team_id> <valore>` — imposta il cap disponibile a un valore assoluto
 `/add_cap <team_id> <importo>` — aggiunge o sottrae cap (accetta negativi)
 `/set_slot <team_id> <valore>` — imposta gli slot disponibili
@@ -40,6 +44,10 @@ Tutti i comandi che modificano lo stato di un'asta o del mercato includono ora i
 `/riapri_asta <asta_id> [ore]` — riporta un'asta da CHIUSA, PAREGGIO o ANNULLATA ad APERTA con una nuova scadenza. Se l'operazione porterebbe il cap virtuale di una squadra in negativo, invia una richiesta di conferma al gruppo admin prima di procedere. Per aste ANNULLATE chiede sempre conferma. Default 18h se non specificato. Cancella automaticamente i job di firma/pareggio pendenti, aggiorna il messaggio nel canale, notifica i watcher e manda un annuncio nel canale.
 
 ## Comandi di osservazione e diagnostica
+
+`/firme [N]` — ultime N firme concluse con nome squadra e anni contratto (default 10). Utile per aggiornare i roster dopo le firme.
+
+`/crea_offerta <team_id> <asta_id> <importo>` — registra un'offerta per conto di un team specifico senza ConversationHandler. Tutti i check vengono applicati. L'azione viene loggata sul canale log con il nome dell'admin. Utile in caso di emergenza o per correggere situazioni particolari.
 
 `/stato_asta <asta_id>` — dump completo di tutti i campi DB di un'asta con storico offerte. Alternativa rapida all'aprire sqlite3 manualmente.
 
