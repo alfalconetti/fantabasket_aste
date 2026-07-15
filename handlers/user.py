@@ -12,7 +12,7 @@ import teams as tm
 import utils
 import settings
 from handlers.helpers import teams_map
-from handlers.admin import autocap as _autocap_from_user, auto_slot as _auto_slot_from_user
+from handlers.admin import autocap as _autocap_from_user, auto_slot as _auto_slot_from_user, cmd_team
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +37,13 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fase = utils.load_globals().get("fase", "offseason")
     cap_pen = team.get("cap_penalizzato", 0)
     s = settings.get()
+    cap_impegnati_contratti  = s["cap_offseason"] - cap_tot
+    slot_impegnati_contratti = s.get("slot_massimo", 15) - slot_tot
 
     righe = [
         f"🏀 <b>{team['nome']}</b>",
         "",
+        f"💰 <b>{cap_impegnati_contratti}M</b> impegnati in contratti",
         f"💰 Cap disponibile (offseason): <b>{cap_tot}M</b>",
         f"⏳ Cap virtualmente impegnato: <b>{cap_virtuale}M</b>",
         f"✅ Cap effettivamente libero: <b>{cap_libero}M</b>",
@@ -59,6 +62,7 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     righe += [
         "",
+        f"🪑 <b>{slot_impegnati_contratti}</b> slot impegnati in contratti",
         f"🪑 Slot totali: <b>{slot_tot}</b>",
         f"⏳ Slot virtualmente impegnati: <b>{slot_impegnati}</b>",
         f"✅ Slot effettivamente liberi: <b>{slot_liberi}</b>",
@@ -161,8 +165,8 @@ def _lista_fa_keyboard(rows: list[dict], aste_aperte_giocatori: set, page: int, 
         fm = f" — FM: {r['fantamedia']}" if r["fantamedia"] else ""
         label = f"{pallino}{r['nome']}{fm}"
         if bot_username:
-            # deep link: spazi → underscore, altri caratteri speciali lasciati (Telegram li gestisce)
-            nome_enc = r["nome"].replace(" ", "_")
+            # deep link: normalizza diacritici, spazi→_, strip apostrofi e punti (Telegram start: solo A-Za-z0-9_-)
+            nome_enc = utils.normalizza(r["nome"]).replace(" ", "_").replace("'", "").replace(".", "")
             url = f"https://t.me/{bot_username}?start=nuova_fa_{nome_enc}"
             righe_kb.append([InlineKeyboardButton(label, url=url)])
         else:
@@ -229,8 +233,8 @@ async def lista_fa_avvia_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.answer(f"❌ Esiste già un'asta aperta per {nome}.", show_alert=True)
         return
 
-    # Deep link: sostituisce spazi con _ per compatibilità URL
-    nome_encoded = nome.replace(" ", "_")
+    # Deep link: normalizza diacritici + strip apostrofi/punti (Telegram start: solo A-Za-z0-9_-)
+    nome_encoded = utils.normalizza(nome).replace(" ", "_").replace("'", "").replace(".", "")
     bot_username = context.bot.username
     deep_link = f"https://t.me/{bot_username}?start=nuova_fa_{nome_encoded}"
 
@@ -334,17 +338,142 @@ async def cmd_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ── /team_detail ─────────────────────────────────────────────────────────────
+
+def _build_team_detail_testo(team: dict) -> str:
+    """Testo dettagli squadra (cap/slot + offerte vincenti). Analogo a /team."""
+    team_id = team["id"]
+    cap_tot        = team["cap_disponibile"]
+    slot_tot       = team["slot_disponibili"]
+    cap_virtuale   = db.get_cap_virtuale(team_id)
+    slot_impegnati = db.get_slot_virtuali(team_id)
+    cap_libero     = cap_tot - cap_virtuale
+    slot_liberi    = slot_tot - slot_impegnati
+    offerte_vince  = db.get_offerte_vincenti_team(team_id)
+
+    fase = utils.load_globals().get("fase", "offseason")
+    cap_pen = team.get("cap_penalizzato", 0)
+    s = settings.get()
+    cap_imp_contratti  = s["cap_offseason"] - cap_tot
+    slot_imp_contratti = s.get("slot_massimo", 15) - slot_tot
+
+    righe = [
+        f"🏀 <b>{team['nome']}</b>",
+        f"<i>ID: <code>{team_id}</code></i>",
+        "",
+        f"💰 <b>{cap_imp_contratti}M</b> impegnati in contratti",
+        f"💰 Cap disponibile (offseason): <b>{cap_tot}M</b>",
+        f"⏳ Cap virtualmente impegnato: <b>{cap_virtuale}M</b>",
+        f"✅ Cap effettivamente libero: <b>{cap_libero}M</b>",
+    ]
+
+    if fase == "offseason":
+        rfa_attive = db.get_rfa_proprietario(team_id)
+        if rfa_attive:
+            cap_rfa = sum(r["vecchio_compenso"] or 0 for r in rfa_attive)
+            nomi_rfa = ", ".join(r["giocatore"] for r in rfa_attive)
+            righe.append(f"⚠️ Cap occupato da RFA: <b>{cap_rfa}M</b> ({nomi_rfa})")
+        delta = s["cap_offseason"] - s["cap_regular"] + cap_pen
+        cap_rs = cap_libero - delta
+        nota_pen = f", penalità {cap_pen}M" if cap_pen else ""
+        righe.append(f"📉 Cap libero in Regular Season: <b>{cap_rs}M</b> (-{delta}M{nota_pen})")
+
+    righe += [
+        "",
+        f"🪑 <b>{slot_imp_contratti}</b> slot impegnati in contratti",
+        f"🪑 Slot totali: <b>{slot_tot}</b>",
+        f"⏳ Slot virtualmente impegnati: <b>{slot_impegnati}</b>",
+        f"✅ Slot effettivamente liberi: <b>{slot_liberi}</b>",
+    ]
+
+    if offerte_vince:
+        righe.append("")
+        righe.append("<i>Offerte vincenti in corso:</i>")
+        for o in offerte_vince:
+            righe.append(
+                f"  • {o['giocatore']} — {o['offerta_corrente']}M "
+                f"(scade {utils.format_dt(o['scade_at'])})"
+            )
+
+    # offerte ultime 24h
+    offerte_24h = db.get_offerte_team_24h(team["id"])
+    if offerte_24h:
+        righe.append("")
+        righe.append("📋 <i>Offerte ultime 24h:</i>")
+        for o in offerte_24h:
+            vincente = (o["offerente_team_id"] == team["id"]
+                        and o["importo"] == o["offerta_corrente"])
+            if vincente and o["stato"] == "APERTA":
+                stato_label = f"✅ vincente (scade {utils.format_dt(o['scade_at'])})"
+            elif vincente:
+                stato_label = "✅ vincente"
+            else:
+                stato_label = "❌ superata"
+            righe.append(
+                f"  • {o['giocatore']} ({o['tipo']}) — "
+                f"{o['importo']}M {stato_label} — {utils.format_dt_short(o['timestamp'])}"
+            )
+
+    return "\n".join(righe)
+
+
+async def cmd_team_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra keyboard con tutte le squadre. Accessibile a tutti."""
+    tutti = tm.get_all_teams()
+    bottoni = [
+        InlineKeyboardButton(f"{t['id']} — {t['nome']}", callback_data=f"td:{t['id']}")
+        for t in tutti
+    ]
+    # 2 per riga
+    righe_kb = [bottoni[i:i+2] for i in range(0, len(bottoni), 2)]
+    kb = InlineKeyboardMarkup(righe_kb)
+    await update.effective_message.reply_text("🏀 Scegli una squadra:", reply_markup=kb)
+
+
+async def team_detail_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    team_id = query.data.split(":", 1)[1]
+    team = tm.get_team_by_id(team_id)
+    if not team:
+        await query.edit_message_text("❌ Squadra non trovata.")
+        return
+
+    testo = _build_team_detail_testo(team)
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("← Torna alla lista", callback_data="td_back")
+    ]])
+    await query.edit_message_text(testo, parse_mode="HTML", reply_markup=kb)
+
+
+async def team_detail_back_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    tutti = tm.get_all_teams()
+    bottoni = [
+        InlineKeyboardButton(f"{t['id']} — {t['nome']}", callback_data=f"td:{t['id']}")
+        for t in tutti
+    ]
+    righe_kb = [bottoni[i:i+2] for i in range(0, len(bottoni), 2)]
+    kb = InlineKeyboardMarkup(righe_kb)
+    await query.edit_message_text("🏀 Scegli una squadra:", reply_markup=kb)
+
+
 def get_handlers():
     return [
         CommandHandler("me",       cmd_me),
         CommandHandler("guida",    cmd_guida),
         CommandHandler("offerta",  cmd_offerta),
+        CommandHandler("team",     cmd_team),
         CommandHandler("autocap",   _autocap_from_user),
         CommandHandler("autoslot",   _auto_slot_from_user),
         CommandHandler("silenzia",    cmd_silenzia),
         CommandHandler("watched",  cmd_watched),
         CommandHandler("lista_fa", cmd_lista_fa),
+        CommandHandler("team_detail", cmd_team_detail),
         CallbackQueryHandler(watch_callback,         pattern=r"^watch:\d+$"),
         CallbackQueryHandler(lista_fa_page_callback, pattern=r"^fa_page:\d+$"),
         CallbackQueryHandler(lista_fa_avvia_callback,pattern=r"^fa_avvia:.+$"),
+        CallbackQueryHandler(team_detail_cb,         pattern=r"^td:.+$"),
+        CallbackQueryHandler(team_detail_back_cb,    pattern=r"^td_back$"),
     ]

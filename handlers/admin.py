@@ -1193,11 +1193,14 @@ async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fase = utils.load_globals().get("fase", "offseason")
     cap_pen = team.get("cap_penalizzato", 0)
     s = settings.get()
+    cap_impegnati_contratti  = s["cap_offseason"] - cap_tot
+    slot_impegnati_contratti = s.get("slot_massimo", 15) - slot_tot
 
     righe = [
         f"🏀 <b>{team['nome']}</b>",
         f"<i>ID: <code>{team_id}</code></i>",
         "",
+        f"💰 <b>{cap_impegnati_contratti}M</b> impegnati in contratti",
         f"💰 Cap disponibile (offseason): <b>{cap_tot}M</b>",
         f"⏳ Cap virtualmente impegnato: <b>{cap_virtuale}M</b>",
         f"✅ Cap effettivamente libero: <b>{cap_libero}M</b>",
@@ -1216,6 +1219,7 @@ async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     righe += [
         "",
+        f"🪑 <b>{slot_impegnati_contratti}</b> slot impegnati in contratti",
         f"🪑 Slot totali: <b>{slot_tot}</b>",
         f"⏳ Slot virtualmente impegnati: <b>{slot_impegnati}</b>",
         f"✅ Slot effettivamente liberi: <b>{slot_liberi}</b>",
@@ -1821,6 +1825,75 @@ async def ripubblica_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 asta_id, msg.message_id, update.effective_user.id)
 
 
+# ── /forza_aggiornamento ──────────────────────────────────────────────────────
+
+async def forza_aggiornamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Riedita forzatamente il messaggio canale di un'asta.
+    Utile quando aggiorna_canale è andato in timeout e il messaggio è rimasto obsoleto.
+    Solo admin.
+    """
+    if not is_admin(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Non sei autorizzato.")
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /forza_aggiornamento &lt;asta_id&gt;", parse_mode="HTML")
+        return
+
+    try:
+        asta_id = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Serve l'ID numerico dell'asta.")
+        return
+
+    asta = db.get_asta(asta_id)
+    if not asta:
+        await update.effective_message.reply_text("❌ Asta non trovata.")
+        return
+    if not asta["canale_msg_id"]:
+        await update.effective_message.reply_text(
+            f"❌ Asta <b>{asta['giocatore']}</b> non ha un canale_msg_id — usa /ripubblica_asta.",
+            parse_mode="HTML",
+        )
+        return
+
+    teams_map = {t["id"]: t["nome"] for t in tm.get_all_teams()}
+    offerte = db.get_offerte(asta_id)
+    testo = utils.build_canale_message(asta, offerte, teams_map)
+    channel_id = utils.get_channel_id()
+
+    keyboard = None
+    if asta["stato"] == "APERTA":
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🏀 Offri", url=f"https://t.me/{context.bot.username}?start=offri_{asta_id}"),
+            InlineKeyboardButton("🔔 Segui", callback_data=f"watch:{asta_id}"),
+        ]])
+
+    try:
+        await context.bot.edit_message_text(
+            chat_id=channel_id,
+            message_id=asta["canale_msg_id"],
+            text=testo,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+    except Exception as e:
+        await update.effective_message.reply_text(
+            f"❌ Edit fallita per asta <b>{asta['giocatore']}</b>: <code>{e}</code>\n"
+            f"Se il messaggio è stato cancellato usa /ripubblica_asta {asta_id}.",
+            parse_mode="HTML",
+        )
+        logger.warning("forza_aggiornamento: asta_id=%d fallita: %s", asta_id, e)
+        return
+
+    await update.effective_message.reply_text(
+        f"✅ Canale aggiornato per <b>{asta['giocatore']}</b> (asta {asta_id}).",
+        parse_mode="HTML",
+    )
+    logger.info("forza_aggiornamento: asta_id=%d admin=%d", asta_id, update.effective_user.id)
+
+
 # ── /force_esito ──────────────────────────────────────────────────────────────
 
 async def force_esito(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2129,6 +2202,7 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "\n"
         "<b>🔧 Recovery ed emergenza</b>\n"
         "/ripubblica_asta &lt;asta_id&gt; — ripubblica il messaggio canale se cancellato per errore\n"
+        "/forza_aggiornamento &lt;asta_id&gt; — riedita forzatamente il messaggio canale (es. dopo timeout)\n"
         "/force_esito &lt;asta_id&gt; — rimanda il messaggio di firma/pareggio al GM senza reboottare\n"
         "\n"
         "<b>🔍 Diagnostica</b>\n"
@@ -2143,7 +2217,6 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def get_handlers():
     return [
         CommandHandler("nuova_rfa",        nuova_rfa),
-        CommandHandler("team",             cmd_team),
         CommandHandler("listteams",        listteams),
         CommandHandler("list",              cmd_list),
         CommandHandler("set_cap",          set_cap),
@@ -2165,6 +2238,7 @@ def get_handlers():
         CallbackQueryHandler(riapri_annullata_callback, pattern=r"^riapri_cap:\d+:\d+$"),
         CallbackQueryHandler(annulla_off_cap_callback,  pattern=r"^annulla_off_cap:\d+:\d+$"),
         CommandHandler("ripubblica_asta",       ripubblica_asta),
+        CommandHandler("forza_aggiornamento",   forza_aggiornamento),
         CommandHandler("force_esito",           force_esito),
         CommandHandler("estendi_asta",          estendi_asta),
         CommandHandler("sposta_asta",           sposta_asta),

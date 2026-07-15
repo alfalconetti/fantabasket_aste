@@ -401,3 +401,79 @@ Comandi riservati al solo `dev_id` (non visibili in /admin), per osservare lo st
 - `/team <team_id>` ora disponibile a tutti i GM (non più solo admin) — rimosso testo "vista admin"
 - `/team` e `/listteams` aggiunti al testo di `/start`
 - `BOT_VERSION` aggiornato a v39
+
+## v40 — Fix pareggio con cap insufficiente
+
+- `pareggio_anni_callback`: se cap o slot insufficienti, ora mostra un popup (`show_alert=True`) invece di editare il messaggio. I bottoni per scegliere gli anni restano attivi — il proprietario può riprovare in qualsiasi momento entro le 24h, ad esempio dopo che una sua offerta su un'altra asta viene superata e il cap si libera
+- `BOT_VERSION` aggiornato a v40
+
+## v41 — RFA ≥35M: anni automatici e pareggio immediato
+
+- Per aste RFA con offerta ≥35M (anni minimi obbligatori = 3), il flusso di scelta anni viene saltato completamente
+- Il vincitore riceve un messaggio descrittivo che conferma l'offerta a 3 anni automatici
+- Il proprietario riceve subito il messaggio di notifica chiusura con importo, anni (3, obbligatori) e scadenza pareggio — senza dover aspettare le 12h del vincitore
+- Il timer del pareggio (24h dalla chiusura) parte immediatamente
+- Il pre-pareggio non viene proposto per ≥35M (inutile — il pareggio parte subito)
+- Recovery al riavvio gestisce tutto normalmente tramite i job rischedulati
+- `BOT_VERSION` aggiornato a v41
+
+## v42 — Pre-rifiuto pareggio RFA
+
+- Nuovo bottone "❌ Non pareggerò" nel messaggio di chiusura RFA (solo per offerte <35M — per ≥35M il proprietario decide direttamente con i bottoni Pareggia/Rinuncio)
+- Il proprietario può pre-impostare il rifiuto mentre aspetta la scelta anni del vincitore — appena il vincitore sceglie, il giocatore passa automaticamente senza aspettare le 24h
+- Il proprietario riceve notifica che il rifiuto è stato eseguito automaticamente
+- Bottone "↩️ Annulla rifiuto" per cambiare idea fino alla scelta anni del vincitore
+- Se c'era un pre-pareggio impostato e si clicca "Non pareggerò", il pre-pareggio viene cancellato automaticamente
+- Nuova colonna DB `rifiuto_preimpostato` — migrazione automatica
+- `BOT_VERSION` aggiornato a v42
+
+## v43 — Pre-impostazioni RFA complete e annunci canale
+
+### Pre-rifiuto condizionale
+- `rifiuto_preimpostato` ora è un intero: 0=nessuno, -1=assoluto, N=condizionale (passa al vincitore se offre >N anni)
+- Rifiuto assoluto incompatibile con pre-pareggio — il bot lo impedisce con alert
+- Rifiuto condizionale compatibile con pre-pareggio se i valori non si sovrappongono (es. pareggio ≤2 + rifiuto >2)
+- Il bot blocca combinazioni contraddittorie con alert descrittivo
+
+### UI pre-impostazioni
+- Nuovo pannello di riepilogo pre-impostazioni con helper `_testo_stato_preimpostazioni` e `_kb_preimpostazioni` — mostra sempre lo stato di entrambe le pre-impostazioni
+- Testo del messaggio di chiusura RFA <35M riscritto con spiegazione chiara delle opzioni (opzionale, risparmia l'attesa delle Xh del vincitore)
+- Pre-pareggio e rifiuto ora si vedono sempre insieme nel pannello di riepilogo
+
+### Annunci canale RFA
+- Alla chiusura asta RFA <35M: annuncio nel canale con importo offerto, ore del vincitore per scegliere anni, scadenza pareggio del proprietario
+- Alla chiusura asta RFA ≥35M: annuncio nel canale con importo × 3 anni e scadenza pareggio
+
+### Logica rifiuto automatico
+- `_esegui_pre_pareggio_se_compatibile` controlla prima il rifiuto (assoluto o condizionale) poi il pre-pareggio
+- Notifica al proprietario descrive il motivo del rifiuto automatico con gli anni effettivamente offerti
+- `BOT_VERSION` aggiornato a v43
+
+## v44 — UX miglioramenti e annunci canale RFA
+
+### /start
+- Struttura a categorie: Azioni aste, La tua situazione, Situazione lega, Altro
+- Rimossi /autocap e /autoslot dalla lista (esistono ma sono comandi rari)
+
+### Flusso offerta
+- Nel messaggio di richiesta importo per il rilancio aggiunto "Cap libero: XM"
+
+### Conferme pareggio/rifiuto
+- Prima di rinunciare al pareggio ("No, rinuncio") ora appare un messaggio di conferma con bottone "Confermo" e "← Indietro"
+- Prima di confermare il pareggio ora appare un riepilogo con importo e anni e bottone "Confermo" e "← Indietro"
+
+### Annunci canale RFA
+- Messaggio 2 sul canale quando il vincitore sceglie gli anni: "Team Y offre ZM × N anni"
+- Se gli anni vengono assegnati automaticamente (timeout 12h): messaggio con nota "anni minimi per fascia — nessuna risposta entro il termine"
+- `BOT_VERSION` aggiornato a v44
+
+## v45 — Fix suffissi cognome e notifica RFA proprietario
+
+### Fix
+- `trova_giocatore_fa()` (`utils.py`): i giocatori con suffisso "Jr.", "Sr.", "II", "III", "IV" venivano cercati per il suffisso invece che per il cognome reale (es. "Wendell Carter Jr." → cercava "Jr."). Introdotto helper `_cognome()` che ignora i suffissi in tutti i punti di matching (esatto, fuzzy, omonimi).
+- Reintrodotta notifica al proprietario RFA ad ogni nuova offerta in `_esegui_offerta()` (`handlers/offerte.py`), persa nel refactoring v34. Il proprietario riceve un push con importo, offerente e scadenza; skippato se è già watcher dell'asta o è lui stesso l'offerente.
+- `/lista_fa` (`handlers/user.py`): i bottoni deep link di giocatori con accenti o apostrofi nel nome (es. "Nikola Jokić", "D'Angelo Russell", "Wendell Carter Jr.", "Royce O'Neale") non aprivano l'asta perché il parametro `start` Telegram accetta solo `A-Za-z0-9_-`. Fix lato encoding: il nome viene normalizzato (`normalizza()`) e i caratteri non consentiti rimossi prima di costruire l'URL. Fix lato decoding (`start_deep_link`, `handlers/offerte.py`): se `trova_giocatore_fa()` non restituisce un match esatto ma ha un suggerimento non ambiguo (es. "oneale" → "O'Neale"), viene usato direttamente senza chiedere conferma — il link proviene da un bottone generato dal bot stesso.
+- Aggiunto `/forza_aggiornamento <asta_id>` (admin): riedita forzatamente il messaggio canale di un'asta, con feedback esplicito su successo o errore. Utile quando `aggiorna_canale` è andato in timeout silenzioso. Se il messaggio risulta cancellato suggerisce `/ripubblica_asta`.
+- Aggiunto `/team_detail` (tutti): keyboard inline con tutte le 24 squadre (2 per riga); premendo una squadra mostra cap/slot (identico a `/team`) + sezione "Offerte ultime 24h" con stato per offerta (✅ vincente con scadenza se asta APERTA, ✅ vincente senza scadenza se chiusa/conclusa, ❌ superata). Bottone "← Torna alla lista" per navigare.
+- Apertura asta FA (`/nuova_fa` e deep link da `/lista_fa`): aggiunta visualizzazione cap libero e, se fase offseason, cap in Regular Season stimato (come in `/team`). Allineato al messaggio di rilancio che già mostrava il cap.
+- `BOT_VERSION` aggiornato a v45

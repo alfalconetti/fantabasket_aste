@@ -73,6 +73,20 @@ def _cap_libero(team_id: str) -> int:
     return team["cap_disponibile"] - db.get_cap_virtuale(team_id)
 
 
+def _cap_info_lines(team: dict, cap_libero: int) -> str:
+    """Righe cap da mostrare all'apertura di una nuova asta FA."""
+    righe = [f"💰 Cap libero: <b>{cap_libero}M</b>"]
+    fase = utils.load_globals().get("fase", "offseason")
+    if fase == "offseason":
+        s = settings.get()
+        cap_pen = team.get("cap_penalizzato", 0)
+        delta = s["cap_offseason"] - s["cap_regular"] + cap_pen
+        cap_rs = cap_libero - delta
+        nota_pen = f", penalità {cap_pen}M" if cap_pen else ""
+        righe.append(f"📉 Cap in Regular Season: <b>{cap_rs}M</b> (-{delta}M{nota_pen})")
+    return "\n".join(righe)
+
+
 def _check_partecipazione(team: dict, asta: dict) -> str | None:
     """
     Controlla se il team può partecipare all'asta.
@@ -191,7 +205,9 @@ async def nuova_fa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data["nuova_fa_giocatore"] = nome_esatto
         context.user_data["nuova_fa_team"] = team
         await msg.reply_text(
-            f"🏀 Nuova asta FA per <b>{nome_esatto}</b>.\n\nQuanto offri? (minimo {settings.rilancio_minimo()}M)\n"
+            f"🏀 Nuova asta FA per <b>{nome_esatto}</b>.\n\n"
+            f"{_cap_info_lines(team, cap)}\n\n"
+            f"Quanto offri? (minimo {settings.rilancio_minimo()}M)\n"
             f"<i>Per annullare: /annulla</i>",
             parse_mode="HTML",
         )
@@ -442,20 +458,23 @@ async def start_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if team:
             guida = (
                 f"Ciao <b>{user.first_name}</b>! Benvenuto nel bot aste Fantabasket 🏀\n\n"
-                f"<b>Comandi:</b>\n"
+                f"<b>Azioni aste</b>\n"
                 f"/offri — fai un'offerta su un'asta aperta\n"
                 f"/nuova_fa &lt;giocatore&gt; — apri un'asta FA\n"
                 f"/lista_fa — lista giocatori FA disponibili (cliccabile)\n"
-                f"/offerta asta &lt;asta_id&gt; &lt;importo&gt; — offerta diretta senza menu\n"
+                f"/offerta asta &lt;asta_id&gt; &lt;importo&gt; — offerta diretta senza menu\n\n"
+                f"<b>La tua situazione</b>\n"
+                f"/me — cap, slot e offerte vincenti\n"
+                f"/watched — aste che stai seguendo\n\n"
+                f"<b>Situazione lega</b>\n"
                 f"/aste — aste in corso\n"
-                f"/listteams — squadre e cap\n"
-                f"/team &lt;team_id&gt; — dettaglio cap e slot di una squadra\n"
-                f"/watched — aste che stai seguendo\n"
-                f"/me — tua situazione cap e slot\n"
-                f"/autocap &lt;importo&gt; — aggiunge cap in emergenza\n"
-                f"/autoslot &lt;importo&gt; — aggiunge slot in emergenza\n"
+                f"/listteams — tutte le squadre\n"
+                f"/team &lt;team_id&gt; — situazione di una squadra\n\n"
+                f"<b>Altro</b>\n"
                 f"/silenzia &lt;asta_id&gt; — smetti di seguire un'asta\n"
-                f"/annulla — esci da qualsiasi operazione in corso\n""/guida — ricevi la guida completa in privata\n""/admin — comandi admin (solo admin)\n\n"
+                f"/annulla — esci da qualsiasi operazione\n"
+                f"/guida — guida completa in privata\n"
+                f"/admin — comandi admin (solo admin)\n\n"
                 f"<b>Come funziona:</b>\n"
                 f"Ogni offerta resetta il timer a 18 ore. Non puoi rilanciare su te stesso. "
                 f"Il bot controlla cap e slot in tempo reale, tenendo conto di tutte le aste che stai vincendo.\n\n"
@@ -482,13 +501,17 @@ async def start_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.effective_message.reply_text("🔒 Il mercato FA è attualmente chiuso.")
             return ConversationHandler.END
 
-        nome_esatto, _, _ = utils.trova_giocatore_fa(nome)
+        nome_esatto, suggerimento, omonimi = utils.trova_giocatore_fa(nome)
         if not nome_esatto:
-            await update.effective_message.reply_text(
-                f"❌ Giocatore '<b>{nome}</b>' non trovato nella lista FA.",
-                parse_mode="HTML",
-            )
-            return ConversationHandler.END
+            # Fallback: suggerimento non ambiguo (es. cognome con apostrofo come O'Neale → oneale)
+            if suggerimento and not suggerimento.startswith("__cognome__") and not omonimi:
+                nome_esatto = suggerimento
+            else:
+                await update.effective_message.reply_text(
+                    f"❌ Giocatore '<b>{nome}</b>' non trovato nella lista FA.",
+                    parse_mode="HTML",
+                )
+                return ConversationHandler.END
 
         if db.giocatore_gia_in_asta(nome_esatto):
             await update.effective_message.reply_text(
@@ -518,6 +541,7 @@ async def start_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["nuova_fa_team"] = team
         await update.effective_message.reply_text(
             f"🏀 Nuova asta FA per <b>{nome_esatto}</b>.\n\n"
+            f"{_cap_info_lines(team, cap)}\n\n"
             f"Quanto offri? (minimo {settings.rilancio_minimo()}M)\n"
             f"<i>Per annullare: /annulla</i>",
             parse_mode="HTML",
@@ -545,9 +569,11 @@ async def start_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data["offri_team"] = team
 
     min_offerta = asta["offerta_corrente"] + settings.rilancio_minimo()
+    cap_lib = _cap_libero(team["id"])
     await update.effective_message.reply_text(
         f"🏀 <b>{asta['giocatore']}</b>\n"
-        f"Offerta attuale: <b>{asta['offerta_corrente']}M</b>\n\n"
+        f"Offerta attuale: <b>{asta['offerta_corrente']}M</b>\n"
+        f"{_cap_info_lines(team, cap_lib)}\n\n"
         f"Scrivi il tuo importo (minimo <b>{min_offerta}M</b>):\n"
         f"<i>Per annullare: /annulla</i>",
         parse_mode="HTML",
@@ -671,6 +697,27 @@ async def _esegui_offerta(context, team, asta_id: int, importo: int, gm_id: int)
         f"Per silenziare: /silenzia {asta_id}",
         escludi_gm=gm_id,
     )
+
+    # RFA: notifica il proprietario ad ogni nuova offerta (skip se già watcher)
+    if asta["tipo"] == "RFA" and team["id"] != asta["squadra_proprietaria"]:
+        team_prop = tm.get_team_by_id(asta["squadra_proprietaria"])
+        if team_prop:
+            watchers = set(db.get_watchers(asta_id))
+            testo_prop = (
+                f"👀 <b>{asta['giocatore']}</b> (tuo RFA)\n"
+                f"Nuova offerta: <b>{importo}M — {team['nome']}</b>\n"
+                f"Scade: {utils.format_dt(nuova_scadenza)}"
+            )
+            for prop_gm in team_prop["gm_ids"]:
+                if prop_gm in watchers or prop_gm == gm_id:
+                    continue
+                try:
+                    await context.bot.send_message(
+                        chat_id=prop_gm, text=testo_prop, parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.warning("Notifica proprietario RFA %d fallita: %s", prop_gm, e)
+
     logger.info("Offerta: asta_id=%d team=%s importo=%d scade=%s", asta_id, team["id"], importo, nuova_scadenza)
     return None
 

@@ -52,32 +52,43 @@ Ricevi un messaggio privato con i bottoni per scegliere gli anni (1, 2 o 3). Hai
 
 Come per la FA, ricevi un messaggio privato con i bottoni per scegliere gli anni (1, 2 o 3). Hai **12 ore** per rispondere — se non rispondi, vengono assegnati automaticamente gli anni minimi per la tua fascia (1 se <20M, 2 se 20-34M, 3 se ≥35M).
 
+**Per offerte ≥35M** gli anni sono sempre 3 (obbligatori) — non ti viene chiesto nulla, ricevi solo la conferma dell'offerta e il proprietario viene avvisato immediatamente. Le 24h di pareggio partono subito.
+
 Dopo che hai scelto gli anni, il proprietario ha 24 ore **dalla fine dell'asta** per decidere se pareggiare. Il bot lo informa subito della tua offerta e della scadenza esatta.
 
 ## Se sei il proprietario di un RFA
 
-Alla chiusura dell'asta ricevi un messaggio con:
-- L'importo offerto dal vincitore
-- La scadenza esatta entro cui devi decidere (24h dalla fine dell'asta)
-- Eventuale avviso se l'offerta è sotto soglia (vedi fasce sotto)
-- Il bottone **⚡ Pre-imposta pareggio**
+Alla chiusura dell'asta ricevi un messaggio con l'importo offerto, la scadenza esatta (24h dalla chiusura) e l'eventuale avviso fascia se l'offerta è sotto soglia.
 
-Il vincitore ha fino a 12h per scegliere gli anni — poi riceverai il messaggio finale con tutti i dettagli per decidere se pareggiare.
+Il vincitore ha fino a 12h per scegliere gli anni — poi riceverai il messaggio completo con tutti i dettagli per decidere. Per le offerte ≥35M gli anni sono già noti (3 obbligatori) e ricevi subito tutto.
 
-### Pre-pareggio
-Puoi pre-impostare il pareggio subito, senza aspettare che il vincitore scelga gli anni. Clicca **⚡ Pre-imposta pareggio** e scegli gli anni che vuoi offrire:
+### Pre-impostazioni opzionali
 
-- **Se l'offerta è sopra soglia** (vedi fasce): il pareggio scatta automaticamente solo se il vincitore offre un numero di anni ≤ a quello che hai scelto. Altrimenti ti verrà chiesto normalmente.
-- **Se l'offerta è sotto soglia**: il pareggio scatta automaticamente a prescindere dagli anni del vincitore — gli anni che scegli sono quelli del tuo contratto.
+Puoi pre-impostare la tua decisione subito, senza aspettare che il vincitore scelga gli anni. **È tutto opzionale** — se non imposti nulla, ricevi normalmente il messaggio completo quando il vincitore risponde.
 
-Dopo aver impostato il pre-pareggio puoi modificarlo o annullarlo in qualsiasi momento finché il vincitore non sceglie gli anni.
+Le pre-impostazioni ti permettono di **risparmiare le ore di attesa** del vincitore.
+
+**⚡ Pre-pareggio ≤N anni** — pareggia automaticamente se il vincitore offre ≤N anni:
+- Se l'offerta è sopra soglia: gli anni del tuo contratto sono quelli offerti dal vincitore
+- Se l'offerta è sotto soglia: il pareggio scatta sempre a prescindere dagli anni — scegli tu gli anni del tuo contratto
+
+**❌ Rifiuto assoluto** — il giocatore passa al vincitore qualunque siano gli anni. Incompatibile con il pre-pareggio.
+
+**❌ Rifiuto condizionale >N anni** — il giocatore passa al vincitore solo se offre più di N anni. Compatibile con il pre-pareggio (es. pareggio ≤2 anni + rifiuto >2 anni copre tutti i casi automaticamente).
+
+**Compatibilità:**
+- Pre-pareggio + rifiuto condizionale ✅ se i valori non si sovrappongono (es. ≤2 e >2)
+- Pre-pareggio + rifiuto assoluto ❌ contraddittori — il bot lo impedisce
+- Pre-pareggio ≤2 + rifiuto >1 ❌ si sovrappongono su 2 anni — il bot lo impedisce
+
+Puoi modificare o annullare qualsiasi pre-impostazione finché il vincitore non sceglie gli anni.
 
 ### Fasce contratto per il pareggio
 - **Vecchio compenso ≤20M**: puoi pareggiare a qualsiasi cifra offerta
 - **Vecchio compenso 21-34M**: se l'offerta è inferiore a 1/3 del vecchio compenso (arrotondato per difetto), devi pareggiare almeno a quella soglia — ma gli anni sono liberi. Se l'offerta è superiore, pareggi alla cifra offerta.
 - **Vecchio compenso ≥35M**: come sopra ma la soglia è 1/2 del vecchio compenso.
 
-Se pareggi, devi offrire almeno gli stessi anni del vincitore (eccetto quando sei sotto soglia, dove gli anni sono liberi).
+Se pareggi sopra soglia, devi offrire almeno gli stessi anni del vincitore. Sotto soglia gli anni sono liberi.
 
 ### Nessuna offerta ricevuta
 Se nessuno ha offerto per il tuo RFA, puoi firmarlo tu seguendo le stesse regole di soglia, oppure lasciarlo andare in free agency.

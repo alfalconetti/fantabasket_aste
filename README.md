@@ -25,7 +25,7 @@ Sviluppato con [Claude](https://claude.ai) (Anthropic).
 ├── log_buffer.py               # Buffer log in memoria condiviso tra bot.py e dev.py
 │   ├── offerte.py          # Flusso offerte FA/RFA
 │   ├── firma.py            # Flusso firma, pareggio RFA
-│   ├── user.py             # Comandi utente: /me /watched /lista_fa /autocap /autoslot /silenzia
+│   ├── user.py             # Comandi utente: /me /watched /lista_fa /team_detail /autocap /autoslot /silenzia
 │   └── admin.py            # Comandi admin
 ├── docs/
 │   ├── guida_gm.md         # Guida per i GM
@@ -142,11 +142,14 @@ docker compose logs -f
 | `/offri` | Lista aste aperte con bottoni deep link — clicca per offrire subito, i bottoni non scadono mai |
 | `/nuova_fa <giocatore>` | Apri asta FA |
 | `/lista_fa` | Lista giocatori FA disponibili — clicca per aprire subito l'asta |
+| `/offerta <asta_id> <importo>` | Offerta one-shot senza flusso conversazionale |
 | `/aste` | Aste in corso |
-| `/list` | Lista asciutta squadre con ID e GM (solo admin) |
+| `/me` | Tua situazione cap e slot |
+| `/team <team_id>` | Situazione cap/slot di una squadra specifica |
+| `/team_detail` | Cap, slot e offerte recenti di qualsiasi squadra (keyboard interattiva) |
 | `/listteams` | Squadre e cap |
 | `/watched` | Aste che stai seguendo |
-| `/me` | Tua situazione cap e slot |
+| `/guida` | Ricevi la guida completa in privata |
 | `/autocap <importo>` | Aggiunge cap in emergenza (notifica admin) |
 | `/autoslot <importo>` | Aggiunge slot in emergenza (notifica admin) |
 | `/silenzia <asta_id>` | Smetti di seguire un'asta |
@@ -174,6 +177,7 @@ docker compose logs -f
 | `/all_aste [stato]` | Lista tutte le aste con filtro opzionale per stato |
 | `/riapri_asta <asta_id> [ore]` | Riporta asta CHIUSA/PAREGGIO/ANNULLATA ad APERTA (conferma se ANNULLATA) |
 | `/ripubblica_asta <asta_id>` | Ripubblica il messaggio canale di un'asta se cancellato per errore |
+| `/forza_aggiornamento <asta_id>` | Riedita forzatamente il messaggio canale (es. dopo timeout) |
 | `/force_esito <asta_id>` | Rimanda il messaggio di firma/pareggio al GM senza reboottare |
 | `/estendi_asta <asta_id> <ore>` | Sposta la scadenza in avanti di N ore |
 | `/sposta_asta <asta_id> <YYYY-MM-DDTHH:MM>` | Imposta scadenza precisa (ora di Roma) |

@@ -57,6 +57,8 @@ Per comandi di diagnostica avanzata (log, job attivi, cap dettagliato) usa `/dev
 
 `/ripubblica_asta <asta_id>` — se il messaggio di un'asta nel canale viene cancellato per errore, questo comando pubblica un nuovo messaggio aggiornato e corregge il riferimento nel DB. Senza questo intervento `aggiorna_canale` continua a fallire (con avviso sul canale log) ad ogni rilancio finché non si sistema manualmente.
 
+`/forza_aggiornamento <asta_id>` — riedita forzatamente il messaggio canale esistente con i dati attuali dal DB. Utile quando `aggiorna_canale` è andato in timeout silenzioso e il messaggio è rimasto obsoleto (es. non mostra l'ultima offerta). A differenza di `/ripubblica_asta` non invia un nuovo messaggio: edita quello già presente. Se l'edit fallisce (messaggio cancellato, timeout di nuovo) suggerisce automaticamente di usare `/ripubblica_asta`.
+
 `/force_esito <asta_id>` — rimanda manualmente il messaggio di firma o pareggio al GM interessato, senza dover reboottare il bot. Funziona solo su aste in stato CHIUSA o PAREGGIO. Non modifica il DB né cambia lo stato dell'asta: si limita a reinviare i messaggi e rischedulare i timeout automatici. Utile quando il GM non ha ricevuto il messaggio (es. aveva bloccato il bot temporaneamente) o quando il job automatico è saltato senza che se ne accorgesse nessuno.
 
 ## Diagnostica e manutenzione

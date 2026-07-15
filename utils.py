@@ -78,6 +78,17 @@ def segna_giocatore_firmato(nome: str):
     shutil.move(tmp, FA_CSV_PATH)
 
 
+_SUFFISSI_COGNOME = {"jr", "sr", "ii", "iii", "iv"}
+
+
+def _cognome(nome: str) -> str:
+    """Ultimo token del nome ignorando i suffissi (Jr., Sr., II, III, IV)."""
+    tokens = nome.split()
+    while len(tokens) > 1 and tokens[-1].lower().rstrip(".") in _SUFFISSI_COGNOME:
+        tokens.pop()
+    return tokens[-1] if tokens else nome
+
+
 def trova_giocatore_fa(input_nome: str) -> tuple[str | None, str | None, list[str]]:
     players = get_fa_players()
     norm_input = normalizza(input_nome)
@@ -86,26 +97,26 @@ def trova_giocatore_fa(input_nome: str) -> tuple[str | None, str | None, list[st
     if norm_input in norm_map:
         return norm_map[norm_input], None, []
 
-    cognome_input = norm_input.split()[-1] if norm_input.split() else norm_input
+    cognome_input = _cognome(norm_input)
     per_cognome = [p for norm_p, p in norm_map.items()
-                   if norm_p.split()[-1] == cognome_input]
+                   if _cognome(norm_p) == cognome_input]
     if len(per_cognome) == 1:
         return per_cognome[0], None, []
     if len(per_cognome) > 1:
         return None, None, per_cognome
 
     # fuzzy sul cognome — prima suggerisce il cognome, poi eventualmente mostra omonimi
-    cognomi_unici = list({normalizza(p).split()[-1] for p in players})
+    cognomi_unici = list({_cognome(normalizza(p)) for p in players})
     matches_cog = difflib.get_close_matches(cognome_input, cognomi_unici, n=1, cutoff=0.75)
     if matches_cog:
         cognome_trovato = matches_cog[0]
         per_cognome_fuzzy = [p for norm_p, p in norm_map.items()
-                             if norm_p.split()[-1] == cognome_trovato]
+                             if _cognome(norm_p) == cognome_trovato]
         if len(per_cognome_fuzzy) == 1:
             return None, per_cognome_fuzzy[0], []
         if len(per_cognome_fuzzy) > 1:
             # Omonimi: suggerisce il cognome originale come conferma, con lista per dopo
-            cognome_originale = per_cognome_fuzzy[0].split()[-1]
+            cognome_originale = _cognome(per_cognome_fuzzy[0])
             return None, f"__cognome__{cognome_originale}", per_cognome_fuzzy
 
     # fuzzy sul nome completo

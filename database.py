@@ -78,6 +78,7 @@ def _migrate():
         "ALTER TABLE aste ADD COLUMN stagione TEXT",
         "ALTER TABLE aste ADD COLUMN notifica_15min INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE aste ADD COLUMN pareggio_preimpostato TEXT",  # JSON {importo, anni}
+        "ALTER TABLE aste ADD COLUMN rifiuto_preimpostato INTEGER NOT NULL DEFAULT 0",
     ]
     with get_conn() as conn:
         for sql in migrazioni:
@@ -271,6 +272,23 @@ def get_offerte_vincenti_team(team_id: str) -> list:
                ORDER BY scade_at""",
             (team_id,),
         ).fetchall()
+
+
+def get_offerte_team_24h(team_id: str) -> list:
+    """Tutte le offerte fatte da team_id nelle ultime 24h con dati asta."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT a.giocatore, a.tipo, a.stato, a.offerente_team_id,
+                      a.scade_at, a.offerta_corrente, o.importo, o.timestamp
+               FROM offerte o
+               JOIN aste a ON o.asta_id = a.id
+               WHERE o.team_id = ? AND o.timestamp >= ?
+               ORDER BY o.timestamp DESC""",
+            (team_id, cutoff),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ── gestione offerte ─────────────────────────────────────────────────────────
@@ -482,6 +500,34 @@ def riapri_asta(asta_id: int, nuova_scadenza: str):
             WHERE id=?
             """,
             (nuova_scadenza, asta_id),
+        )
+
+def set_rifiuto_preimpostato(asta_id: int, valore: int):
+    """
+    Imposta il rifiuto preimpostato:
+      0  = nessun rifiuto
+     -1  = rifiuto assoluto (incompatibile con pre-pareggio)
+      N (1-3) = rifiuto condizionale se vincitore offre >N anni (compatibile con pre-pareggio)
+    """
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE aste SET rifiuto_preimpostato=? WHERE id=?",
+            (valore, asta_id),
+        )
+
+def get_rifiuto_preimpostato(asta_id: int) -> int:
+    """Restituisce il valore rifiuto: 0=nessuno, -1=assoluto, N=condizionale >N anni."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT rifiuto_preimpostato FROM aste WHERE id=?", (asta_id,)
+        ).fetchone()
+        return row[0] if row else 0
+    """Salva il pre-pareggio del proprietario RFA."""
+    import json
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE aste SET pareggio_preimpostato=? WHERE id=?",
+            (json.dumps({"importo": importo, "anni": anni}), asta_id),
         )
 
 def set_pareggio_preimpostato(asta_id: int, importo: int, anni: int):
